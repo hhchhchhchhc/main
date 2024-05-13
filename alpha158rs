@@ -33,12 +33,13 @@ fn cal_return_factors(data: &[DataItem], return_ma_windows: &[usize]) -> (std::c
 
     for &d in return_ma_windows {
         let col = format!("return_ma_{}", d);
-        let returns: Vec<f64> = data.windows(d+1)
+        let mut returns: Vec<f64> = data.windows(d+1)
             .map(|w| w[d].close / w[0].close - 1.0)
             .collect();
         let return_ma: Vec<f64> = returns.windows(d)
             .map(|w| w.iter().sum::<f64>() / d as f64)
             .collect();
+        returns.drain(..d);
         features_data.insert(col.clone(), return_ma);
         feature_names.push(col);
     }
@@ -50,30 +51,45 @@ fn cal_price_field(data: &[DataItem], field: &str, windows: &[usize]) -> (std::c
     let mut features_data = std::collections::HashMap::new();
     let mut feature_names = Vec::new();
 
+    let price_data: Vec<f64> = match field {
+        "Open" => data.iter().map(|item| item.open).collect(),
+        "High" => data.iter().map(|item| item.high).collect(),
+        "Low" => data.iter().map(|item| item.low).collect(),
+        "Close" => data.iter().map(|item| item.close).collect(),
+        _ => panic!("Invalid price field"),
+    };
+
+    let close_data: Vec<f64> = data.iter().map(|item| item.close).collect();
+
     for &d in windows {
         // ROC
         let col = format!("{}_roc_{}", field, d);
-        let roc: Vec<f64> = data.windows(d+1)
-            .map(|w| w[0].close / w[d].close)
+        let roc: Vec<f64> = price_data.windows(d+1)
+            .map(|w| w[d] / close_data[close_data.len() - w.len() + d])
             .collect();
         features_data.insert(col.clone(), roc);
         feature_names.push(col);
 
         // MA
         let col = format!("{}_ma_{}", field, d);
-        let ma: Vec<f64> = data.windows(d)
-            .map(|w| w.iter().map(|item| item.close).sum::<f64>() / d as f64)
+        let ma: Vec<f64> = price_data.windows(d)
+            .map(|w| {
+                let sum = w.iter().sum::<f64>();
+                let ma = sum / d as f64;
+                ma / close_data[close_data.len() - w.len()]
+            })
             .collect();
         features_data.insert(col.clone(), ma);
         feature_names.push(col);
 
         // STD
         let col = format!("{}_std_{}", field, d);
-        let std_dev: Vec<f64> = data.windows(d)
+        let std_dev: Vec<f64> = price_data.windows(d)
             .map(|w| {
-                let mean = w.iter().map(|item| item.close).sum::<f64>() / d as f64;
-                let variance = w.iter().map(|item| (item.close - mean).powi(2)).sum::<f64>() / (d - 1) as f64;
-                variance.sqrt()
+                let mean = w.iter().sum::<f64>() / d as f64;
+                let variance = w.iter().map(|x| (*x - mean).powi(2)).sum::<f64>() / (d - 1) as f64;
+                let std = variance.sqrt();
+                std / close_data[close_data.len() - w.len()]
             })
             .collect();
         features_data.insert(col.clone(), std_dev);
@@ -81,46 +97,54 @@ fn cal_price_field(data: &[DataItem], field: &str, windows: &[usize]) -> (std::c
 
         // Beta
         let col = format!("{}_beta_{}", field, d);
-        let beta: Vec<f64> = data.windows(d+1)
-            .map(|w| (w[d].close - w[0].close) / d as f64 / w[0].close)
+        let beta: Vec<f64> = price_data.windows(d+1)
+            .map(|w| (w[d] - w[0]) / d as f64 / w[0])
             .collect();
         features_data.insert(col.clone(), beta);
         feature_names.push(col);
 
         // MAX
         let col = format!("{}_max_{}", field, d);
-        let max: Vec<f64> = data.windows(d)
-            .map(|w| w.iter().map(|item| item.close).fold(f64::NEG_INFINITY, f64::max))
+        let max: Vec<f64> = price_data.windows(d)
+            .map(|w| {
+                let max_price = w.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+                max_price / close_data[close_data.len() - w.len()]
+            })
             .collect();
         features_data.insert(col.clone(), max);
         feature_names.push(col);
 
         // MIN
         let col = format!("{}_min_{}", field, d);
-        let min: Vec<f64> = data.windows(d)
-            .map(|w| w.iter().map(|item| item.close).fold(f64::INFINITY, f64::min))
+        let min: Vec<f64> = price_data.windows(d)
+            .map(|w| {
+                let min_price = w.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+                min_price / close_data[close_data.len() - w.len()]
+            })
             .collect();
         features_data.insert(col.clone(), min);
         feature_names.push(col);
 
         // Quantile
         let col = format!("{}_q80_{}", field, d);
-        let q80: Vec<f64> = data.windows(d)
+        let q80: Vec<f64> = price_data.windows(d)
             .map(|w| {
-                let mut prices: Vec<f64> = w.iter().map(|item| item.close).collect();
+                let mut prices: Vec<f64> = w.to_vec();
                 prices.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                prices[(d as f64 * 0.8) as usize]
+                let q80_price = prices[(d as f64 * 0.8) as usize];
+                q80_price / close_data[close_data.len() - w.len()]
             })
             .collect();
         features_data.insert(col.clone(), q80);
         feature_names.push(col);
 
         let col = format!("{}_q20_{}", field, d);
-        let q20: Vec<f64> = data.windows(d)
+        let q20: Vec<f64> = price_data.windows(d)
             .map(|w| {
-                let mut prices: Vec<f64> = w.iter().map(|item| item.close).collect();
+                let mut prices: Vec<f64> = w.to_vec();
                 prices.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                prices[(d as f64 * 0.2) as usize]
+                let q20_price = prices[(d as f64 * 0.2) as usize];
+                q20_price / close_data[close_data.len() - w.len()]
             })
             .collect();
         features_data.insert(col.clone(), q20);
@@ -134,22 +158,29 @@ fn cal_vol_field(data: &[DataItem], field: &str, windows: &[usize]) -> (std::col
     let mut features_data = std::collections::HashMap::new();
     let mut feature_names = Vec::new();
 
+    let vol_data: Vec<f64> = data.iter().map(|item| item.volume).collect();
+
     for &d in windows {
         // MA
         let col = format!("{}_ma_{}", field, d);
-        let ma: Vec<f64> = data.windows(d)
-            .map(|w| w.iter().map(|item| item.volume).sum::<f64>() / d as f64)
+        let ma: Vec<f64> = vol_data.windows(d)
+            .map(|w| {
+                let sum = w.iter().sum::<f64>();
+                let ma = sum / d as f64;
+                ma / (vol_data[vol_data.len() - w.len()] + 1e-8)
+            })
             .collect();
         features_data.insert(col.clone(), ma);
         feature_names.push(col);
 
         // STD
         let col = format!("{}_std_{}", field, d);
-        let std_dev: Vec<f64> = data.windows(d)
+        let std_dev: Vec<f64> = vol_data.windows(d)
             .map(|w| {
-                let mean = w.iter().map(|item| item.volume).sum::<f64>() / d as f64;
-                let variance = w.iter().map(|item| (item.volume - mean).powi(2)).sum::<f64>() / (d - 1) as f64;
-                variance.sqrt()
+                let mean = w.iter().sum::<f64>() / d as f64;
+                let variance = w.iter().map(|x| (*x - mean).powi(2)).sum::<f64>() / (d - 1) as f64;
+                let std = variance.sqrt();
+                std / (vol_data[vol_data.len() - w.len()] + 1e-8)
             })
             .collect();
         features_data.insert(col.clone(), std_dev);
@@ -157,8 +188,8 @@ fn cal_vol_field(data: &[DataItem], field: &str, windows: &[usize]) -> (std::col
 
         // VSUMP
         let col = format!("v_sump_{}", d);
-        let v_change: Vec<f64> = data.windows(2)
-            .map(|w| w[1].volume - w[0].volume)
+        let v_change: Vec<f64> = vol_data.windows(2)
+            .map(|w| w[1] - w[0])
             .collect();
         let sump: Vec<f64> = v_change.windows(d)
             .map(|w| w.iter().filter(|&&x| x > 0.0).sum::<f64>())
@@ -208,18 +239,19 @@ fn cal_price_vol_factors(data: &[DataItem], windows: &[usize]) -> (std::collecti
         // CORR
         let col = format!("p_v_corr_{}", d);
         let price: Vec<f64> = data.iter().map(|item| item.close).collect();
-        let volume: Vec<f64> = data.iter().map(|item| item.volume).map(|x| (x + 1.0).ln()).collect();
+        let volume: Vec<f64> = data.iter().map(|item| (item.volume + 1.0).ln()).collect();
         let corr: Vec<f64> = price.windows(d)
             .zip(volume.windows(d))
             .map(|(price_window, volume_window)| {
-                let price_mean = price_window.iter().sum::<f64>() / d as f64;
-                let volume_mean = volume_window.iter().sum::<f64>() / d as f64;
-                let covariance = price_window.iter().zip(volume_window.iter())
+                let (price_mean, volume_mean) = (price_window.iter().sum::<f64>() / d as f64, volume_window.iter().sum::<f64>() / d as f64);
+                let (price_std, volume_std) = (
+                    price_window.iter().map(|&x| (x - price_mean).powi(2)).sum::<f64>().sqrt(),
+                    volume_window.iter().map(|&x| (x - volume_mean).powi(2)).sum::<f64>().sqrt()
+                );
+                let cov = price_window.iter().zip(volume_window.iter())
                     .map(|(&p, &v)| (p - price_mean) * (v - volume_mean))
-                    .sum::<f64>() / (d - 1) as f64;
-                let price_std = price_window.iter().map(|&x| (x - price_mean).powi(2)).sum::<f64>().sqrt() / (d - 1) as f64;
-                let volume_std = volume_window.iter().map(|&x| (x - volume_mean).powi(2)).sum::<f64>().sqrt() / (d - 1) as f64;
-                covariance / (price_std * volume_std)
+                    .sum::<f64>();
+                cov / (price_std * volume_std)
             })
             .collect();
         features_data.insert(col.clone(), corr);
@@ -231,20 +263,20 @@ fn cal_price_vol_factors(data: &[DataItem], windows: &[usize]) -> (std::collecti
             .map(|w| w[1].close / w[0].close)
             .collect();
         let vol_change: Vec<f64> = data.windows(2)
-            .map(|w| w[1].volume / w[0].volume)
-            .map(|x| (x + 1.0).ln())
+            .map(|w| (w[1].volume / w[0].volume).ln())
             .collect();
         let cord: Vec<f64> = price_change.windows(d)
             .zip(vol_change.windows(d))
             .map(|(price_window, volume_window)| {
-                let price_mean = price_window.iter().sum::<f64>() / d as f64;
-                let volume_mean = volume_window.iter().sum::<f64>() / d as f64;
-                let covariance = price_window.iter().zip(volume_window.iter())
+                let (price_mean, volume_mean) = (price_window.iter().sum::<f64>() / d as f64, volume_window.iter().sum::<f64>() / d as f64);
+                let (price_std, volume_std) = (
+                    price_window.iter().map(|&x| (x - price_mean).powi(2)).sum::<f64>().sqrt(),
+                    volume_window.iter().map(|&x| (x - volume_mean).powi(2)).sum::<f64>().sqrt()
+                );
+                let cov = price_window.iter().zip(volume_window.iter())
                     .map(|(&p, &v)| (p - price_mean) * (v - volume_mean))
-                    .sum::<f64>() / (d - 1) as f64;
-                let price_std = price_window.iter().map(|&x| (x - price_mean).powi(2)).sum::<f64>().sqrt() / (d - 1) as f64;
-                let volume_std = volume_window.iter().map(|&x| (x - volume_mean).powi(2)).sum::<f64>().sqrt() / (d - 1) as f64;
-                covariance / (price_std * volume_std)
+                    .sum::<f64>();
+                cov / (price_std * volume_std)
             })
             .collect();
         features_data.insert(col.clone(), cord);
