@@ -255,7 +255,7 @@ fn cal_price_vol_factors(data: &[DataItem], windows: &[usize]) -> (std::collecti
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file = std::fs::File::open("1000_1mBTCUSDT240418.parquet")?;
+    let file = std::fs::File::open("../1mBTCUSDT240418.parquet")?;
     let reader: Box<dyn FileReader> = Box::new(SerializedFileReader::new(file)?);
     let mut iter = reader.get_row_iter(None)?;
 
@@ -319,7 +319,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut writer = WriterBuilder::new()
         .has_headers(true)
-        .from_writer(File::create("alpha158_features.csv")?);
+        .from_writer(File::create("/hy-tmp/features0.csv")?);
 
     writer.write_record(&feature_names)?;
 
