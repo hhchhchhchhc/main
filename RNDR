@@ -1,0 +1,191 @@
+
+import os
+
+os.environ['https_proxy'] = 'http://127.0.0.1:7890/'
+os.environ['http_proxy'] = 'http://127.0.0.1:7890/'
+
+def main(INPUT):
+    import os
+
+    os.environ['https_proxy'] = 'http://127.0.0.1:7890/'
+    os.environ['http_proxy'] = 'http://127.0.0.1:7890/'
+
+    from alpha158 import Alpha158
+    from datetime import datetime, timedelta
+    import requests
+    import json
+    import time
+    from datetime import datetime, timedelta
+    import datetime
+    rollbardf=pd.read_csv(f'autodl-tmp/{INPUT}rollbardf')
+    import binance
+    import time
+    import os
+    import time
+    import datetime
+    from binance.client import Client
+    API_KEY = 'dtZ8mQh0LWuytNqzfvDMN6sbJRTxpUbNJ9WKkT8YFRltLkir1ezmD1vCVv8Hz56p'
+    API_SECRET = 'jufQS4dkzXTG3xjq7D9RbJzEc9h9jOdwBxY4RhwixWsl7wTWYIZI8DUd1DJKBPDl'
+    # 创建Binance客户端实例
+    client = Client(API_KEY, API_SECRET)
+    client.SPOT_USE_BNB_FOR_FEES = True
+    client.FUTURES_USE_BNB_FOR_FEES = True
+
+    # 指定交易对
+    symbol = f"{INPUT}USDT"
+
+    # 获取今日0点的Unix毫秒时间戳
+    today_0000 = int(datetime.datetime.combine(datetime.date.today(), datetime.time(0, 0, 0)).timestamp() * 1000)
+
+
+    #while True:
+    for _ in range(1):
+        # 获取当前时间
+        from datetime import datetime
+        now = datetime.now()
+
+        # 计算上一个15分钟的起始时间和结束时间
+        end_time = now.replace(minute=now.minute // 15 * 15, second=0, microsecond=0)
+        start_time = end_time - timedelta(minutes=15)
+        from datetime import datetime, timedelta
+
+        # Binance API的基础URL
+        base_url = 'https://fapi.binance.com'
+
+        # 指定交易对,如{INPUT}USDT
+        symbol = f'{INPUT}USDT'
+
+        # 指定时间间隔,5m表示5分钟
+        interval = '15m'
+        now = datetime.now()
+
+        # 计算时间差并将其转换为秒数
+        time_diff = now - start_time
+        time_diff_seconds = time_diff.total_seconds()
+
+        # 计算5分钟的时间间隔对应的秒数
+        interval_seconds = 15 * 60
+
+        # 计算需要获取的数据条数
+        total_limit = int(time_diff_seconds // interval_seconds) + 1
+
+        # 每次请求获取的数据条数
+        batch_size = 1000
+
+        # 初始化开始时间戳
+        start_timestamp = int(start_time.timestamp() * 1000)
+        alldatas=[]
+        while total_limit > 0:
+            #try:
+                # 计算每次请求的数据条数
+                limit = min(batch_size, total_limit)
+
+                # 构建请求的URL
+                url = f'{base_url}/fapi/v1/klines?symbol={symbol}&interval={interval}&startTime={start_timestamp}&limit={limit}'
+
+                # 发送GET请求
+                response = requests.get(url)
+
+                # 解析响应的JSON数据
+                data = json.loads(response.text)
+                if len(data) > 0:
+                    # 更新开始时间戳和剩余数据条数
+                    start_timestamp = data[-1][0] + interval_seconds * 1000
+                    total_limit -= limit
+                alldatas+=data
+
+                # 添加请求间隔时间,避免超过API限制
+                #time.sleep(1)
+        import datetime
+        latestbardf=pd.DataFrame(np.array(alldatas).astype(np.float64),columns=[['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time',
+       'quote_volume', 'count', 'taker_buy_volume', 'taker_buy_quote_volume',
+       'ignore']]).drop_duplicates()
+        latestbardf.index=range(len(latestbardf))
+
+        import datetime
+        latestbardf['time']=[str(datetime.datetime.fromtimestamp(x/1000))+'+08:00' for x in latestbardf['open_time'].values.flatten()]
+
+        latestbardf['Open']=latestbardf['open']
+        latestbardf['Close']=latestbardf['close']
+        latestbardf['High']=latestbardf['high']
+        latestbardf['Low']=latestbardf['low']
+        latestbardf['Volume']=latestbardf['volume']
+
+        latestbardf=latestbardf.drop(['open_time','open','close','high','low','volume'],axis=1)
+        latestbardf.columns=['close_time', 'quote_volume', 'count', 'taker_buy_volume',
+       'taker_buy_quote_volume', 'ignore', 'time', 'Open', 'Close', 'High',
+       'Low', 'Volume']
+        tmp=pd.concat([rollbardf,latestbardf],axis=0)
+        rollbardf=tmp.drop_duplicates(subset='time', keep='last')
+        rollbardf=rollbardf.set_index('time')
+
+        alpha = Alpha158(rollbardf)
+        features0 = alpha.calculate()
+
+        features0['buy_ratio1']=rollbardf['taker_buy_volume']/rollbardf['Volume']
+        features0['buy_ratio2']=rollbardf['taker_buy_quote_volume']/rollbardf['quote_volume']
+
+        features=pd.concat([rollbardf,features0],axis=1)
+        features=features.loc[rollbardf.index]
+        try:features=features.drop(['target'],axis=1)
+        except:pass
+        try:features=features.drop(['T'],axis=1)
+        except:pass
+        try:features=features.drop(['time'],axis=1)
+        except:pass  
+        import joblib
+        model=joblib.load(f'{INPUT}catlatest')
+        cols=['close_time', 'quote_volume', 'count', 'taker_buy_volume', 'taker_buy_quote_volume', 'ignore', 'Open', 'Close', 'High', 'Low', 'Volume', 'Open_roc_5', 'Open_ma_5', 'Open_std_5', 'Open_beta_5', 'Open_max_5', 'Open_min_5', 'Open_q80_5', 'Open_q20_5', 'Open_roc_10', 'Open_ma_10', 'Open_std_10', 'Open_beta_10', 'Open_max_10', 'Open_min_10', 'Open_q80_10', 'Open_q20_10', 'Open_roc_20', 'Open_ma_20', 'Open_std_20', 'Open_beta_20', 'Open_max_20', 'Open_min_20', 'Open_q80_20', 'Open_q20_20', 'Open_roc_30', 'Open_ma_30', 'Open_std_30', 'Open_beta_30', 'Open_max_30', 'Open_min_30', 'Open_q80_30', 'Open_q20_30', 'Open_roc_60', 'Open_ma_60', 'Open_std_60', 'Open_beta_60', 'Open_max_60', 'Open_min_60', 'Open_q80_60', 'Open_q20_60', 'High_roc_5', 'High_ma_5', 'High_std_5', 'High_beta_5', 'High_max_5', 'High_min_5', 'High_q80_5', 'High_q20_5', 'High_roc_10', 'High_ma_10', 'High_std_10', 'High_beta_10', 'High_max_10', 'High_min_10', 'High_q80_10', 'High_q20_10', 'High_roc_20', 'High_ma_20', 'High_std_20', 'High_beta_20', 'High_max_20', 'High_min_20', 'High_q80_20', 'High_q20_20', 'High_roc_30', 'High_ma_30', 'High_std_30', 'High_beta_30', 'High_max_30', 'High_min_30', 'High_q80_30', 'High_q20_30', 'High_roc_60', 'High_ma_60', 'High_std_60', 'High_beta_60', 'High_max_60', 'High_min_60', 'High_q80_60', 'High_q20_60', 'Low_roc_5', 'Low_ma_5', 'Low_std_5', 'Low_beta_5', 'Low_max_5', 'Low_min_5', 'Low_q80_5', 'Low_q20_5', 'Low_roc_10', 'Low_ma_10', 'Low_std_10', 'Low_beta_10', 'Low_max_10', 'Low_min_10', 'Low_q80_10', 'Low_q20_10', 'Low_roc_20', 'Low_ma_20', 'Low_std_20', 'Low_beta_20', 'Low_max_20', 'Low_min_20', 'Low_q80_20', 'Low_q20_20', 'Low_roc_30', 'Low_ma_30', 'Low_std_30', 'Low_beta_30', 'Low_max_30', 'Low_min_30', 'Low_q80_30', 'Low_q20_30', 'Low_roc_60', 'Low_ma_60', 'Low_std_60', 'Low_beta_60', 'Low_max_60', 'Low_min_60', 'Low_q80_60', 'Low_q20_60', 'Close_roc_5', 'Close_ma_5', 'Close_std_5', 'Close_beta_5', 'Close_max_5', 'Close_min_5', 'Close_q80_5', 'Close_q20_5', 'Close_roc_10', 'Close_ma_10', 'Close_std_10', 'Close_beta_10', 'Close_max_10', 'Close_min_10', 'Close_q80_10', 'Close_q20_10', 'Close_roc_20', 'Close_ma_20', 'Close_std_20', 'Close_beta_20', 'Close_max_20', 'Close_min_20', 'Close_q80_20', 'Close_q20_20', 'Close_roc_30', 'Close_ma_30', 'Close_std_30', 'Close_beta_30', 'Close_max_30', 'Close_min_30', 'Close_q80_30', 'Close_q20_30', 'Close_roc_60', 'Close_ma_60', 'Close_std_60', 'Close_beta_60', 'Close_max_60', 'Close_min_60', 'Close_q80_60', 'Close_q20_60', 'Volume_ma_5', 'Volume_std_5', 'v_sump_5', 'v_sumn_5', 'Volume_ma_10', 'Volume_std_10', 'v_sump_10', 'v_sumn_10', 'Volume_ma_20', 'Volume_std_20', 'v_sump_20', 'v_sumn_20', 'Volume_ma_30', 'Volume_std_30', 'v_sump_30', 'v_sumn_30', 'Volume_ma_60', 'Volume_std_60', 'v_sump_60', 'v_sumn_60', 'wvma_5', 'p_v_corr_5', 'p_v_cord_5', 'wvma_10', 'p_v_corr_10', 'p_v_cord_10', 'wvma_20', 'p_v_corr_20', 'p_v_cord_20', 'wvma_30', 'p_v_corr_30', 'p_v_cord_30', 'wvma_60', 'p_v_corr_60', 'p_v_cord_60', 'return_ma_5', 'buy_ratio1', 'buy_ratio2']
+        pred=model.predict(features[cols].loc[str(start_time)+'+08:00'].values.reshape([1,-1]))
+        pred=np.array([pred]).flatten()[0]
+        print(pred,start_time)
+
+        # 如果预测价格上涨，且当前无持仓，则买入
+        symbol = f'{INPUT}USDT'
+        account_balance = float(client.futures_account_balance(asset='USDT')[0]['balance'])
+        position = float(client.futures_position_information(symbol=symbol)[0]['positionAmt'])
+        current_price = float(client.futures_symbol_ticker(symbol=symbol)['price'])
+        fee = 0.05*0.9 / 100
+        slippage = 0.02 / 100
+
+        if pred > 0.0027 and position == 0:
+            # 计算最大可买入量，考虑滑点和手续费
+            max_buy_quantity = min(1000,account_balance) / (current_price * (1 + slippage) * (1 + fee))
+
+            max_buy_contracts = max_buy_quantity / current_price
+            max_buy_contracts = math.floor(max_buy_contracts * 10**0) / 10**0
+            # 买入永续合约
+            order = client.futures_create_order(
+                symbol=symbol,
+                side=Client.SIDE_BUY,
+                type=Client.ORDER_TYPE_MARKET,
+                quantity=max_buy_contracts,
+                recvWindow=5000
+            )
+
+            position = max_buy_contracts
+            account_balance -= max_buy_contracts * current_price * (1 + slippage) * (1 + fee)
+
+        # 如果预测价格下跌，且当前有持仓，则卖出
+        elif pred < 0 and position > 0:
+            # 计算最大可卖出量
+            max_sell_contracts = position
+            
+            # 卖出永续合约
+            order = client.futures_create_order(
+                symbol=symbol,
+                side=Client.SIDE_SELL,
+                type=Client.ORDER_TYPE_MARKET,
+                quantity=max_sell_contracts,
+                recvWindow=5000
+            )
+
+            account_balance += max_sell_contracts * current_price * (1 - slippage) * (1 - fee)
+            position = 0
+        np.save(f'autodl-tmp/{INPUT}pred{now.year}-{now.month}-{now.day}-{now.hour}-{now.minute}', pred)
+def ultimate():
+    main('ICP')
+from apscheduler.schedulers.blocking import BlockingScheduler
+scheduler = BlockingScheduler()
+scheduler.add_job(ultimate, 'cron', minute='0,15,30,45') #实时下单
+scheduler.start()
