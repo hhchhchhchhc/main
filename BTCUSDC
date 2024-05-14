@@ -220,8 +220,8 @@ def main(INPUT):
     import time
     import datetime
     from binance.client import Client
-    API_KEY = 'dtZ8mQh0LWuytNqzfvDMN6sbJRTxpUbNJ9WKkT8YFRltLkir1ezmD1vCVv8Hz56p'
-    API_SECRET = 'jufQS4dkzXTG3xjq7D9RbJzEc9h9jOdwBxY4RhwixWsl7wTWYIZI8DUd1DJKBPDl'
+    API_KEY = ''
+    API_SECRET = ''
     # 创建Binance客户端实例
     client = Client(API_KEY, API_SECRET)
     client.SPOT_USE_BNB_FOR_FEES = True
