@@ -146,8 +146,11 @@ class FT:
         max_length = max(len(self.df), max(len(v) for v in features_data.values()))
         for d in self.windows:
             # Fractal Dimension
-            col = 'fractal_dimension_hurst_%d' % d
+            col = 'fractal_dimension_hausdorff_%d' % d
             features_data[col] = self.factor_fractal_dimension(d)
+            self.feature_names.append(col)
+            col = 'fractal_dimension_hurst_%d' % d
+            features_data[col] = self.factor_fractal_dimension(d,hurst)
             self.feature_names.append(col)
 
             # Smart Money Flow  
@@ -272,7 +275,6 @@ class FT:
         for d in self.windows:
             vol_ma = self.df['Volume'].rolling(d).mean()
             vol_std = self.df['Volume'].rolling(d).std()
-
             col = 'abnormal_trading_pattern_2_%d' % d
             features_data[col] = (self.df['Volume'] > vol_ma + 2*vol_std).astype(int)
             self.feature_names.append(col)
@@ -292,7 +294,7 @@ class FT:
             
         # Price/Volume Cointegration
         for d in self.windows:
-            col = 'p_v_cord_%d' % d
+            col = 'price_volume_cointegration_%d' % d
             features_data[col] = self.factor_price_volume_cointegration(d)
             self.feature_names.append(col)
 
@@ -322,10 +324,19 @@ class FT:
 
         # Price/Volume Correlation
         for d in self.windows:
-            col = 'p_v_corr_%d' % d
-            features_data[col] = self.factor_price_volume_corr(d)
+            col = 'p_v_corr0_%d' % d
+            features_data[col] = self.factor_price_volume_corr0(d)
             self.feature_names.append(col)
 
+        for d in self.windows:
+            col = 'p_v_corr1_%d' % d
+            features_data[col] = self.factor_price_volume_corr1(d)
+            self.feature_names.append(col)
+
+        for d in self.windows:
+            col = 'p_v_cord_%d' % d
+            features_data[col] = self.factor_price_volume_cord(d)
+            self.feature_names.append(col)
         # Money Flow
         for d in self.windows:
             col = 'money_flow_%d' % d
@@ -361,11 +372,18 @@ class FT:
         poly = np.polyfit(np.log(lags), np.log(tau), 1)
         return poly[0]*2.0
 
-    def factor_price_volume_corr(self, n):
+    def factor_price_volume_corr0(self, n):
         price = self.df['Close'].pct_change()
         volume = self.df['Volume'].pct_change()
         corr = price.rolling(n).corr(volume)
         return corr
+
+    def factor_price_volume_corr1(self, n):
+        return self.df['Close'].rolling(d).corr(np.log(self.df['Volume']+1))
+    def factor_price_volume_cord(self, n):
+        price_change = self.df['Close'] / self.df['Close'].shift(1)
+        vol_change = self.df['Volume'] / self.df['Volume'].shift(1) 
+        return price_change.rolling(d).corr(np.log(vol_change+1))
 
     def factor_price_volume_cointegration(self, n):
         price = self.df['Close'].replace(np.inf,np.nan).replace(-np.inf,np.nan).fillna(method='ffill').fillna(0)
