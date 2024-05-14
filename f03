@@ -512,16 +512,17 @@ class FT:
         return beta
 
 import pandas as pd
+import pandas as pd
 # 读取原始数据
-file_path = '1000_1mBTCUSDT240418.parquet'  # 替换为你的实际文件路径
-df = pd.read_parquet(file_path)
-
+sym='BTC'
+df = pd.read_parquet(f'1mfutures{sym}USDT18.parquet')
+import datetime
 # 创建 Alpha158 实例
 ft = FT(df)
 
 # 计算因子特征
-factor_features = ft.calculate()
+features = ft.calculate()
 
 # 将因子特征保存为新的 Parquet 文件
-output_path = 'features03.parquet'  # 替换为你要保存的文件路径
-factor_features.to_parquet(output_path)
+output_path = f'/hy-tmp/features03_1mfutures{sym}USDT18.parquet'  # 替换为你要保存的文件路径
+features.to_parquet(output_path)
