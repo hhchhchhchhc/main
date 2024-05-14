@@ -21,20 +21,20 @@ class FT:
         
         # 计算价格类因子
         for field in self.price_fields:
-            self.cal_price_field(field, features_data)
+            features_data=self.cal_price_field(field, features_data)
         
         # 计算交易量类因子
         for field in self.vol_fields:
-            self.cal_vol_field(field, features_data)
+            features_data=self.cal_vol_field(field, features_data)
         
         # 计算价量组合类因子 
-        self.cal_price_vol_factors(features_data)
+        features_data=self.cal_price_vol_factors(features_data)
         
         # 计算收益率类因子
-        self.cal_return_factors(features_data)
+        features_data=self.cal_return_factors(features_data)
         
         # 计算其他类型因子
-        self.cal_other_factors(features_data)
+        features_data=self.cal_other_factors(features_data)
         
         self.features = pd.DataFrame(features_data, index=self.df.index)
         return self.features
@@ -44,7 +44,7 @@ class FT:
             col = f'return_ma_{d}'
             features_data[col] = self.df['Close'].pct_change(d).rolling(d).mean()
             self.feature_names.append(col)
-
+        return features_data
     def cal_price_field(self, field, features_data):
         for d in self.windows:
             # ROC
@@ -87,6 +87,7 @@ class FT:
             features_data[col] = self.df[field].rolling(d).max()
             self.feature_names.append(col)
 
+        return features_data
     def cal_vol_field(self, field, features_data):
         for d in self.windows:
             # ROC
@@ -104,6 +105,7 @@ class FT:
             features_data[col] = self.df[field].rolling(d).std()
             self.feature_names.append(col)
 
+        return features_data
     def cal_price_vol_factors(self, features_data):
         for d in self.windows:
             # 价格/成交量
@@ -139,6 +141,7 @@ class FT:
             features_data[col] = self.psy_line(d)
             self.feature_names.append(col)
 
+        return features_data
     def cal_other_factors(self, features_data):
         max_length = max(len(self.df), max(len(v) for v in features_data.values()))
         for d in self.windows:
@@ -348,7 +351,7 @@ class FT:
             if len(v) < max_length:
                 features_data[k] = np.concatenate((np.nan*np.zeros(max_length - len(v)),v.values.flatten()))
         #features_data['feature_name'] = self.feature_names
-        return pd.DataFrame(features_data)
+        return features_data
 
     def hurst_exponent(self, series, window):
         if len(series) < window:
