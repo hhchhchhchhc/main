@@ -1,3 +1,107 @@
+os.environ['https_proxy'] = 'http://127.0.0.1:7890/'
+os.environ['http_proxy'] = 'http://127.0.0.1:7890/'
+import os
+import requests
+from datetime import datetime, timedelta
+import zipfile
+import glob
+import pandas as pd
+from multiprocessing import Pool, set_start_method
+def download_monthly_data(args):
+    symbol, year, month, output_dir = args
+    url = f"https://data.binance.vision/data/futures/um/monthly/klines/{symbol}/1m/{symbol}-1m-{year}-{month}.zip"
+    output_file = f"{symbol}-1m-{year}-{month}.zip"
+    os.makedirs(output_dir, exist_ok=True)
+    response = requests.get(url)
+    with open(os.path.join(output_dir, output_file), "wb") as file:
+        file.write(response.content)
+    print(f"文件 {output_file} 下载完成!")
+
+def extract_files(file_path):
+    try:
+        with zipfile.ZipFile(file_path, "r") as zip_ref:
+            zip_ref.extractall(os.path.dirname(file_path))
+        print(f"文件 {os.path.basename(file_path)} 解压完成!")
+    except:
+        pass
+
+def process_symbol(sym):
+    if os.path.isfile(f'1mfutures{sym}USDT.csv'):
+        return
+
+    symbol = f"{sym}USDT"
+    start_date = datetime(2018, 1, 1)
+    end_date = datetime(2024, 4, 30)
+    output_dir = "/hy-tmp/1mfutures"
+
+    current_date = start_date
+    download_args = []
+    while current_date <= end_date:
+        year = current_date.strftime("%Y")
+        month = current_date.strftime("%m")
+        download_args.append((symbol, year, month, output_dir))
+        current_date = current_date + timedelta(days=32)
+        current_date = datetime(current_date.year, current_date.month, 1)
+
+    with Pool() as pool:
+        pool.map(download_monthly_data, download_args)
+
+    data_directory = "/hy-tmp/1mfutures"
+    zip_files = glob.glob(os.path.join(data_directory, "*.zip"))
+
+    with Pool() as pool:
+        pool.map(extract_files, zip_files)
+
+process_symbol('BTC')
+
+import os
+import glob
+import pandas as pd
+from multiprocessing import Pool, set_start_method
+
+def process_file(file_path, sym):
+    df = pd.read_csv(file_path)
+    
+    if df.columns[0]!='open_time':
+        df.columns = ['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time',
+                      'quote_volume', 'count', 'taker_buy_volume', 'taker_buy_quote_volume',
+                      'ignore']
+        df.to_csv(file_path, index=False)
+        print(f"文件 {os.path.basename(file_path)} 已处理完成！")
+    else:
+        print(f"文件 {os.path.basename(file_path)} 不需要处理。")
+
+def process_symbol(sym):
+    file_paths = sorted(glob.glob(f'/hy-tmp/1mfutures/{sym}USDT*csv'))
+    
+    with Pool() as pool:
+        pool.starmap(process_file, [(file_path, sym) for file_path in file_paths])
+process_symbol('BTC')
+
+sym='BTC'
+df = pd.concat([pd.read_csv(f) for f in sorted(glob.glob(f'/hy-tmp/1mfutures/{sym}USDT*csv'))], axis=0)
+
+df['time'] = pd.to_datetime(df['open_time'], unit='ms')
+df['Open'] = df['open']
+df['Close'] = df['close']
+df['High'] = df['high']
+df['Low'] = df['low']
+df['Volume'] = df['volume']
+df = df.drop(['open_time', 'open', 'close', 'high', 'low', 'volume'], axis=1)
+df['target'] = df['Close'].pct_change().shift(-1)
+df = df.set_index('time')
+df['time'] = df.index
+df.to_parquet(f'1mfutures{sym}USDT18.parquet')
+
+
+
+
+
+
+
+
+
+
 import os
 
 os.environ['https_proxy'] = 'http://127.0.0.1:7890/'
