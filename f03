@@ -378,9 +378,9 @@ class FT:
         corr = price.rolling(n).corr(volume)
         return corr
 
-    def factor_price_volume_corr1(self, n):
+    def factor_price_volume_corr1(self, d):
         return self.df['Close'].rolling(d).corr(np.log(self.df['Volume']+1))
-    def factor_price_volume_cord(self, n):
+    def factor_price_volume_cord(self, d):
         price_change = self.df['Close'] / self.df['Close'].shift(1)
         vol_change = self.df['Volume'] / self.df['Volume'].shift(1) 
         return price_change.rolling(d).corr(np.log(vol_change+1))
