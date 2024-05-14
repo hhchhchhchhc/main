@@ -1,0 +1,1370 @@
+import datetime
+symbol='BTCUSDT'
+df=pd.read_parquet(f'/hy-tmp/1m/{symbol}_1m_all.parquet')
+
+import pandas as pd
+import numpy as np
+import talib as ta
+
+# 假设数据已经读入dataframe df,包含收盘价'Close'、最高价'High'、最低价'Low'、成交量'Volume'等
+
+def factor_sma(df, n):
+    """简单移动平均线"""
+    return pd.Series(df['Close'].rolling(n).mean(), name=f'MA_{n}')
+
+def factor_ema(df, n):
+    """指数移动平均线"""
+    return pd.Series(df['Close'].ewm(span=n).mean(), name=f'EMA_{n}')
+
+def factor_mom(df, n):
+    """动量因子"""
+    return pd.Series(df['Close'].pct_change(n), name=f'MOM_{n}')
+
+def factor_roc(df, n):
+    """变动率因子"""
+    return pd.Series((df['Close'] / df['Close'].shift(n) - 1), name=f'ROC_{n}')
+
+def factor_rsv(df, n):
+    """K值因子"""
+    Low_min = df['Low'].rolling(window=n).min()  
+    High_max = df['High'].rolling(window=n).max()
+    rsv = (df['Close'] - Low_min)/(High_max - Low_min) * 100
+    return pd.Series(rsv, name=f'RSV_{n}')
+
+def factor_rsi(df, n):
+    """相对强弱指标RSI"""
+    diff = df['Close'].diff()
+    up = pd.Series(np.where(diff > 0, diff, 0), index=df.index)
+    down = pd.Series(np.where(diff < 0, -diff, 0), index=df.index)
+    RS = up.rolling(n).mean() / down.rolling(n).mean()
+    rsi = 100 - 100/(1+RS)
+    return pd.Series(rsi, name=f'RSI_{n}')
+
+def factor_obv(df):
+    """能量潮指标OBV"""
+    obv = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+    return pd.Series(obv, name='OBV')
+
+def factor_cci(df, n):
+    """顺势指标CCI"""
+    TP = (df['High'] + df['Low'] + df['Close']) / 3 
+    CCI = (TP - TP.rolling(n).mean()) / (0.015 * TP.rolling(n).std())
+    return pd.Series(CCI, name=f'CCI_{n}')
+
+def factor_atr(df, n):
+    """平均真实波动幅度ATR"""
+    TR = np.maximum(df['High']-df['Low'], np.abs(df['High']-df['Close'].shift(1)), np.abs(df['Low']-df['Close'].shift(1)))
+    ATR = TR.rolling(n).mean()
+    return pd.Series(ATR, name=f'ATR_{n}')
+
+def factor_boll(df, n, k):
+    """布林带宽度因子"""
+    mid = df['Close'].rolling(n).mean()
+    std = df['Close'].rolling(n).std()
+    up = mid + k * std
+    Low = mid - k * std
+    width = (up - Low) / mid
+    return pd.Series(width, name=f'BOLL_{n}_{k}')
+
+def factor_kdj(df, n, m1, m2):
+    """随机指标KDJ"""
+    Low_min = df['Low'].rolling(window=n).min()
+    High_max = df['High'].rolling(window=n).max()
+    rsv = (df['Close'] - Low_min)/(High_max - Low_min) * 100
+    K = rsv.ewm(m1).mean()
+    D = K.ewm(m2).mean()
+    J = 3 * K - 2 * D
+    df[f'K_{n}_{m1}_{m2}'] = K
+    df[f'D_{n}_{m1}_{m2}'] = D
+    df[f'J_{n}_{m1}_{m2}'] = J
+    return df
+
+def factor_macd(df, n1, n2, m):
+    """指数平滑异同平均线MACD"""
+    ema1 = df['Close'].ewm(n1).mean()
+    ema2 = df['Close'].ewm(n2).mean()
+    diff = ema1 - ema2
+    dea = diff.ewm(m).mean()
+    macd = (diff - dea) * 2
+    df[f'DIFF_{n1}_{n2}'] = diff
+    df[f'DEA_{n1}_{n2}_{m}'] = dea
+    df[f'MACD_{n1}_{n2}_{m}'] = macd
+    return df
+    
+def factor_ad(df):
+    """累积/派发线AD"""
+    ad = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) * df['Volume'] / (df['High'] - df['Low'])
+    ad = ad.fillna(0).cumsum()
+    return pd.Series(ad, name='AD')
+
+def factor_adosc(df, n1, n2):
+    """震荡指标 Chaikin A/D oscillator"""
+    ad = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) * df['Volume'] / (df['High'] - df['Low'])
+    ad = ad.fillna(0).cumsum()
+    adosc = ad.ewm(n1).mean() - ad.ewm(n2).mean()
+    return pd.Series(adosc, name=f'ADOSC_{n1}_{n2}')  
+
+def factor_hma(df, n):
+    """高价平均线 High Moving Average"""
+    return pd.Series(df['High'].rolling(n).mean(), name=f'HMA_{n}')
+
+def factor_lma(df, n):
+    """低价平均线 Low Moving Average"""
+    return pd.Series(df['Low'].rolling(n).mean(), name=f'LMA_{n}')
+
+def factor_vma(df, n):
+    """成交量平均线 Volume Moving Average"""
+    return pd.Series(df['Volume'].rolling(n).mean(), name=f'VMA_{n}')
+
+def factor_vmacd(df, n1, n2, m):
+    """量平滑异同平均线 Volume MACD"""
+    vema1 = df['Volume'].ewm(n1).mean()
+    vema2 = df['Volume'].ewm(n2).mean() 
+    vdiff = vema1 - vema2
+    vdea = vdiff.ewm(m).mean()
+    vmacd = (vdiff - vdea) * 2
+    df[f'VDIFF_{n1}_{n2}'] = vdiff  
+    df[f'VDEA_{n1}_{n2}_{m}'] = vdea
+    df[f'VMACD_{n1}_{n2}_{m}'] = vmacd
+    return df
+
+def factor_vstd(df, n):
+    """成交量标准差"""
+    return pd.Series(df['Volume'].rolling(n).std(), name=f'VSTD_{n}')  
+
+def factor_vrsi(df, n):
+    """量相对强弱指标VRSI"""
+    vdiff = df['Volume'].diff()
+    vup = pd.Series(np.where(vdiff > 0, vdiff, 0), index=df.index)
+    vdown = pd.Series(np.where(vdiff < 0, -vdiff, 0), index=df.index)
+    VRS = vup.rolling(n).sum() / vdown.rolling(n).sum()
+    vrsi = 100 - 100/(1+VRS)
+    return pd.Series(vrsi, name=f'VRSI_{n}')
+
+def factor_vosc(df, n1, n2):
+    """成交量震荡指标 Volume Oscillator"""
+    vema1 = df['Volume'].ewm(n1).mean()
+    vema2 = df['Volume'].ewm(n2).mean()
+    vosc = (vema1 - vema2) / vema2 * 100
+    return pd.Series(vosc, name=f'VOSC_{n1}_{n2}') 
+
+def factor_mfi(df, n):
+    """资金流向指标 Money FLow Index"""
+    typ = (df['High'] + df['Low'] + df['Close']) / 3
+    mr = typ * df['Volume'] 
+    up = pd.Series(np.where(typ > typ.shift(1), mr, 0), index=df.index)
+    down = pd.Series(np.where(typ < typ.shift(1), mr, 0), index=df.index)
+    mf = up.rolling(n).sum() / down.rolling(n).sum()
+    mfi = 100 - 100/(1+mf)
+    return pd.Series(mfi, name=f'MFI_{n}')
+
+
+
+
+import pandas as pd
+import numpy as np
+
+
+import talib
+from scipy.stats import entropy, skew, kurtosis
+
+def factor_high_order_moment(df, n, moment):
+    """高阶矩因子"""
+    returns = df['Close'].pct_change()
+    if moment == 'skewness':
+        factor = returns.rolling(n).apply(skew)
+    elif moment == 'kurtosis':
+        factor = returns.rolling(n).apply(kurtosis)
+    else:
+        raise ValueError(f"Unsupported moment: {moment}")
+    return pd.Series(factor, name=f'HighOrderMoment_{moment}_{n}')
+
+def factor_sma(df, n):
+    return pd.Series(df['Close'].rolling(n).mean(), name=f'SMA_{n}')
+
+def factor_ema(df, n):
+    return pd.Series(df['Close'].ewm(span=n).mean(), name=f'EMA_{n}')
+
+def factor_wma(df, n):
+    return pd.Series(talib.WMA(df['Close'], timeperiod=n), name=f'WMA_{n}')
+
+def factor_mom(df, n):
+    return pd.Series(df['Close'].pct_change(n), name=f'MOM_{n}')
+
+def factor_roc(df, n):
+    return pd.Series((df['Close'] / df['Close'].shift(n)) - 1, name=f'ROC_{n}')
+
+def factor_rsi(df, n):
+    diff = df['Close'].diff()
+    up = pd.Series(np.where(diff > 0, diff, 0), index=df.index)
+    down = pd.Series(np.where(diff < 0, -diff, 0), index=df.index)
+    RS = up.rolling(n).mean() / down.rolling(n).mean()
+    rsi = 100 - 100 / (1 + RS)
+    return pd.Series(rsi, name=f'RSI_{n}')
+
+def factor_cmo(df, n):
+    diff = df['Close'].diff()
+    up = pd.Series(np.where(diff > 0, diff, 0), index=df.index)
+    down = pd.Series(np.where(diff < 0, -diff, 0), index=df.index)
+    cmo = 100 * (up.rolling(n).sum() - down.rolling(n).sum()) / (up.rolling(n).sum() + down.rolling(n).sum())
+    return pd.Series(cmo, name=f'CMO_{n}')
+
+def factor_atr(df, n):
+    tr = np.maximum(df['High']-df['Low'], np.abs(df['High']-df['Close'].shift(1)), np.abs(df['Low']-df['Close'].shift(1)))
+    atr = tr.rolling(n).mean()
+    return pd.Series(atr, name=f'ATR_{n}')
+
+def factor_adx(df, n):
+    plus_dm = df['High'] - df['High'].shift(1)
+    minus_dm = df['Low'].shift(1) - df['Low']
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
+    
+    tr = np.maximum(df['High']-df['Low'], np.abs(df['High']-df['Close'].shift(1)), np.abs(df['Low']-df['Close'].shift(1)))
+    
+    plus_di = 100 * plus_dm.rolling(n).sum() / tr.rolling(n).sum()
+    minus_di = 100 * minus_dm.rolling(n).sum() / tr.rolling(n).sum()
+    
+    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
+    adx = dx.rolling(n).mean()
+    return pd.Series(adx, name=f'ADX_{n}')
+
+def factor_boll(df, n, k):
+    mid = df['Close'].rolling(n).mean()
+    std = df['Close'].rolling(n).std()
+    upper = mid + k * std
+    lower = mid - k * std
+    return pd.Series(upper, name=f'BOLL_UPPER_{n}_{k}'), pd.Series(mid, name=f'BOLL_MID_{n}_{k}'), pd.Series(lower, name=f'BOLL_LOWER_{n}_{k}')
+
+def factor_cci(df, n):
+    tp = (df['High'] + df['Low'] + df['Close']) / 3
+    ma = tp.rolling(n).mean()
+    md = tp.rolling(n).apply(lambda x: np.abs(x - x.mean()).mean())
+    cci = (tp - ma) / (0.015 * md)
+    return pd.Series(cci, name=f'CCI_{n}')
+
+def factor_sar(df, step=0.02, max_step=0.2):
+    af = 0.02
+    sar = df['Low'].copy()
+    ep_high = df['High'].copy()
+    ep_low = df['Low'].copy()
+    trend = 1
+    
+    for i in range(1, len(df)):
+        if trend == 1:
+            sar[i] = sar[i-1] + af * (ep_high[i-1] - sar[i-1])
+        else:
+            sar[i] = sar[i-1] + af * (ep_low[i-1] - sar[i-1])
+        
+        if trend == 1 and df['Low'][i] < sar[i]:
+            trend = -1
+            ep_low[i] = df['Low'][i]
+            sar[i] = ep_high[i-1]
+        elif trend == -1 and df['High'][i] > sar[i]:
+            trend = 1
+            ep_high[i] = df['High'][i]
+            sar[i] = ep_low[i-1]
+        else:
+            if trend == 1:
+                ep_high[i] = max(ep_high[i-1], df['High'][i])
+            else:
+                ep_low[i] = min(ep_low[i-1], df['Low'][i])
+        
+        if trend == 1:
+            if df['Low'][i] < sar[i]:
+                sar[i] = df['Low'][i]
+        else:
+            if df['High'][i] > sar[i]:
+                sar[i] = df['High'][i]
+        
+        if trend == 1:
+            if ep_high[i] > ep_high[i-1]:
+                af = min(af + step, max_step)
+        else:
+            if ep_low[i] < ep_low[i-1]:
+                af = min(af + step, max_step)
+    
+    return pd.Series(sar, name='SAR')
+
+def factor_macd(df, n1, n2, m):
+    ema1 = df['Close'].ewm(span=n1).mean()
+    ema2 = df['Close'].ewm(span=n2).mean()
+    macd = ema1 - ema2
+    signal = macd.ewm(span=m).mean()
+    return pd.Series(macd, name=f'MACD_{n1}_{n2}_{m}'), pd.Series(signal, name=f'MACD_SIGNAL_{n1}_{n2}_{m}')
+
+def factor_kd(df, n, m1, m2):
+    low_min = df['Low'].rolling(window=n).min()
+    high_max = df['High'].rolling(window=n).max()
+    rsv = (df['Close'] - low_min) / (high_max - low_min) * 100
+    k = rsv.ewm(com=m1-1, adjust=False).mean()
+    d = k.ewm(com=m2-1, adjust=False).mean()
+    return pd.Series(k, name=f'K_{n}_{m1}_{m2}'), pd.Series(d, name=f'D_{n}_{m1}_{m2}')
+
+def factor_obv(df):
+    obv = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+    return pd.Series(obv, name='OBV')
+
+def factor_vpt(df):
+    vpt = (df['Volume'] * (df['Close'] - df['Close'].shift(1)) / df['Close'].shift(1)).fillna(0).cumsum()
+    return pd.Series(vpt, name='VPT')
+
+def factor_apo(df, n1, n2):
+    ema1 = df['Close'].ewm(span=n1).mean()
+    ema2 = df['Close'].ewm(span=n2).mean()
+    apo = ema1 - ema2
+    return pd.Series(apo, name=f'APO_{n1}_{n2}')
+
+def factor_mfi(df, n):
+    tp = (df['High'] + df['Low'] + df['Close']) / 3
+    raw_mf = tp * df['Volume']
+    mf_positive = raw_mf.where(tp > tp.shift(1), 0)
+    mf_negative = raw_mf.where(tp < tp.shift(1), 0)
+    mfr = mf_positive.rolling(n).sum() / mf_negative.rolling(n).sum()
+    mfi = 100 - (100 / (1 + mfr))
+    return pd.Series(mfi, name=f'MFI_{n}')
+
+def factor_bb_width(df, n):
+    bb_upper, _, bb_lower = factor_boll(df, n, 2)
+    return pd.Series((bb_upper - bb_lower) / df['Close'], name=f'BB_WIDTH_{n}')
+
+def factor_bb_percent(df, n):
+    bb_upper, bb_mid, bb_lower = factor_boll(df, n, 2)
+    return pd.Series((df['Close'] - bb_lower) / (bb_upper - bb_lower), name=f'BB_PERCENT_{n}')
+
+def factor_dbcd(df, n):
+    bb_upper, _, bb_lower = factor_boll(df, n, 2)
+    return pd.Series(2 * (df['Close'] > bb_upper).astype(int) - 2 * (df['Close'] < bb_lower).astype(int), name=f'DBCD_{n}')
+
+def factor_trix(df, n):
+    ema1 = df['Close'].ewm(span=n).mean()
+    ema2 = ema1.ewm(span=n).mean()
+    ema3 = ema2.ewm(span=n).mean()
+    return pd.Series(ema3.pct_change() * 100, name=f'TRIX_{n}')
+
+def factor_vwap(df, n):
+    vwap = (df['Volume'] * (df['High'] + df['Low']) / 2).rolling(n).sum() / df['Volume'].rolling(n).sum()
+    return pd.Series(vwap, name=f'VWAP_{n}')
+
+def factor_kst(df, r1, r2, r3, r4, n1, n2, n3, n4):
+    rocma1 = ((df['Close'] - df['Close'].shift(r1)) / df['Close'].shift(r1)).rolling(n1).mean()
+    rocma2 = ((df['Close'] - df['Close'].shift(r2)) / df['Close'].shift(r2)).rolling(n2).mean()
+    rocma3 = ((df['Close'] - df['Close'].shift(r3)) / df['Close'].shift(r3)).rolling(n3).mean()
+    rocma4 = ((df['Close'] - df['Close'].shift(r4)) / df['Close'].shift(r4)).rolling(n4).mean()
+    kst = 100 * (rocma1 + 2 * rocma2 + 3 * rocma3 + 4 * rocma4)
+    signal = kst.rolling(10).mean()
+    return pd.Series(kst, name=f'KST_{r1}_{r2}_{r3}_{r4}_{n1}_{n2}_{n3}_{n4}'), pd.Series(signal, name=f'KST_SIGNAL_{r1}_{r2}_{r3}_{r4}_{n1}_{n2}_{n3}_{n4}')
+
+def factor_dpo(df, n):
+    dpo = df['Close'] - df['Close'].rolling(n).mean().shift(int(n/2+1))
+    return pd.Series(dpo, name=f'DPO_{n}')
+
+def factor_dmi(df, n):
+    tr = np.maximum(df['High']-df['Low'], np.abs(df['High']-df['Close'].shift(1)), np.abs(df['Low']-df['Close'].shift(1)))
+    plus_dm = np.where(df['High'] > df['High'].shift(1), df['High'] - df['High'].shift(1), 0)
+    minus_dm = np.where(df['Low'] < df['Low'].shift(1), df['Low'].shift(1) - df['Low'], 0)
+    plus_dm = pd.Series(plus_dm, index=df.index)  # Convert plus_dm to pandas Series
+    minus_dm = pd.Series(minus_dm, index=df.index)  # Convert minus_dm to pandas Series
+    tr = pd.Series(tr, index=df.index)  # Convert tr to pandas Series
+    plus_di = 100 * plus_dm.rolling(n).sum() / tr.rolling(n).sum()
+    minus_di = 100 * minus_dm.rolling(n).sum() / tr.rolling(n).sum()
+    return pd.Series(plus_di, name=f'PLUS_DI_{n}'), pd.Series(minus_di, name=f'MINUS_DI_{n}')
+
+def factor_vidya(df, n):
+    cmo = factor_cmo(df, n)
+    vidya = (df['Close'].shift(1) * (n - 1) + df['Close'] * (2 * np.abs(cmo) / 100)) / n
+    return pd.Series(vidya, name=f'VIDYA_{n}')
+
+def factor_qstick(df, n):
+    qstick = (df['Close'] - df['Open']).rolling(n).mean()
+    return pd.Series(qstick, name=f'QSTICK_{n}')
+
+def factor_masso(df, n):
+    ema1 = df['Close'].ewm(span=n).mean()
+    ema2 = ema1.ewm(span=n).mean()
+    masso = ema1 - ema2
+    return pd.Series(masso, name=f'MASSO_{n}')
+
+def factor_vortex(df, n):
+    tr = np.maximum(df['High']-df['Low'], np.abs(df['High']-df['Close'].shift(1)), np.abs(df['Low']-df['Close'].shift(1)))
+    vmp = np.abs(df['High'] - df['Low'].shift(1))
+    vmm = np.abs(df['Low'] - df['High'].shift(1))
+    vip = vmp.rolling(n).sum() / tr.rolling(n).sum()
+    vin = vmm.rolling(n).sum() / tr.rolling(n).sum()
+    return pd.Series(vip, name=f'VIP_{n}'), pd.Series(vin, name=f'VIN_{n}')
+
+def factor_kc(df, n, m):
+    tr = np.maximum(df['High']-df['Low'], np.abs(df['High']-df['Close'].shift(1)), np.abs(df['Low']-df['Close'].shift(1)))
+    atr = tr.rolling(n).mean()
+    ma = df['Close'].rolling(m).mean()
+    upper = ma + 2 * atr
+    lower = ma - 2 * atr
+    return pd.Series(upper, name=f'KC_UPPER_{n}_{m}'), pd.Series(lower, name=f'KC_LOWER_{n}_{m}')
+
+def factor_uo(df):
+    bp = df['Close'] - df[['Low', 'Open']].min(axis=1)
+    tr = df['High'] - df['Low']
+    avg7 = bp.rolling(7).sum() / tr.rolling(7).sum()
+    avg14 = bp.rolling(14).sum() / tr.rolling(14).sum()
+    avg28 = bp.rolling(28).sum() / tr.rolling(28).sum()
+    return pd.Series(100 * (4*avg7 + 2*avg14 + avg28) / 7, name='UO')
+
+def factor_stoch(df, n, m1, m2, t):
+    smin = df['Low'].rolling(n).min()
+    smax = df['High'].rolling(n).max()
+    stk = 100 * (df['Close'] - smin) / (smax - smin)
+    std = stk.rolling(m1).mean()
+    stld = stk.rolling(t).mean()
+    return pd.Series(stk, name=f'STOCH_K_{n}_{m1}_{m2}_{t}'), pd.Series(std, name=f'STOCH_D_{n}_{m1}_{m2}_{t}'), pd.Series(stld, name=f'STOCH_LD_{n}_{m1}_{m2}_{t}')
+def factor_wr(df, n):
+    wr = -100 * (df['High'].rolling(n).max() - df['Close']) / (df['High'].rolling(n).max() - df['Low'].rolling(n).min())
+    return pd.Series(wr, name=f'WR_{n}')
+
+def factor_mi(df, n):
+    mi = (df['Volume'] * (df['Close'] - df['Close'].shift(1)) / df['Close'].shift(1)).rolling(n).sum()
+    return pd.Series(mi, name=f'MI_{n}')
+
+def factor_ai(df):
+    ai = (df['High'] - df['Open']) / (df['Open'] - df['Low'])
+    return pd.Series(ai, name='AI')
+
+def factor_vhf(df, n):
+    vhf = (df['Close'].rolling(n).max() - df['Close'].rolling(n).min()) / (df['Close'] - df['Close'].shift(1)).abs().rolling(n).sum()
+    return pd.Series(vhf, name=f'VHF_{n}')
+
+def factor_atr_bands(df, n, m):
+    atr = factor_atr(df, n)
+    middle = df['Close'].rolling(m).mean()
+    upper = middle + 2 * atr
+    lower = middle - 2 * atr
+    return pd.Series(upper, name=f'ATR_UPPER_{n}_{m}'), pd.Series(middle, name=f'ATR_MIDDLE_{n}_{m}'), pd.Series(lower, name=f'ATR_LOWER_{n}_{m}')
+
+def factor_chaikin_volatility(df, n):
+    high_low = df['High'] - df['Low']
+    ema1 = high_low.ewm(span=n).mean()
+    ema2 = ema1.ewm(span=n).mean()
+    return pd.Series((ema1 - ema2) / ema2, name=f'CHAIKIN_VOLATILITY_{n}')
+
+def factor_volatility_ratio(df, n):
+    high_low = df['High'] - df['Low']
+    volatility_ratio = high_low.rolling(n).mean() / high_low.rolling(2*n).mean()
+    return pd.Series(volatility_ratio, name=f'VOLATILITY_RATIO_{n}')
+
+def factor_eom(df, n):
+    volume = df['Volume'].rolling(n).mean()
+    high_low = (df['High'] - df['Low']).rolling(n).mean()
+    eom = (volume / high_low) * (df['Close'] - df['Close'].shift(n))
+    return pd.Series(eom, name=f'EOM_{n}')
+
+def factor_copp(df, n):
+    copp = (df['High'] + df['Low'] + df['Close']) / 3
+    copp_ma = copp.rolling(n).mean()
+    return pd.Series(copp - copp_ma, name=f'COPP_{n}')
+
+def factor_keltner_channels(df, n):
+    tp = (df['High'] + df['Low'] + df['Close']) / 3
+    atr = factor_atr(df, n)
+    ema = tp.ewm(span=n).mean()
+    upper = ema + 2 * atr
+    lower = ema - 2 * atr
+    return pd.Series(upper, name=f'KELTNER_UPPER_{n}'), pd.Series(ema, name=f'KELTNER_MIDDLE_{n}'), pd.Series(lower, name=f'KELTNER_LOWER_{n}')
+
+def factor_price_volume_trend(df, n):
+    pvt = (df['Volume'] * (df['Close'] - df['Close'].shift(1)) / df['Close'].shift(1)).fillna(0).cumsum()
+    pvt_ema = pvt.ewm(span=n).mean()
+    return pd.Series(pvt_ema, name=f'PVT_EMA_{n}')
+
+def factor_choppiness_index(df, n):
+    atr = factor_atr(df, 1)
+    atr_sum = atr.rolling(n).sum()
+    high_low_range = df['High'].rolling(n).max() - df['Low'].rolling(n).min()
+    return pd.Series(100 * np.log10(atr_sum / high_low_range) / np.log10(n), name=f'CHOPPINESS_INDEX_{n}')
+
+def factor_disparity_index(df, n):
+    disparity = df['Close'] / df['Close'].rolling(n).mean()
+    return pd.Series(disparity, name=f'DISPARITY_INDEX_{n}')
+
+def factor_mass_index(df, n):
+    high_low_range = df['High'] - df['Low']
+    ema1 = high_low_range.ewm(span=9).mean()
+    ema2 = ema1.ewm(span=9).mean()
+    mass = ema1 / ema2
+    return pd.Series(mass.rolling(n).sum(), name=f'MASS_INDEX_{n}')
+
+def factor_demark_trendline(df):
+    demark = np.where(df['Close'] > df['Close'].shift(1), df[['High','Low']].max(axis=1), df[['High','Low']].min(axis=1))
+    demark = pd.Series(demark, index=df.index)  # Convert to pandas Series
+    trendline = demark.rolling(2).mean()
+    return pd.Series(trendline, name='DEMARK_TRENDLINE')
+
+def factor_qstick_cross(df):
+    qstick = df['Close'] - df['Open']
+    qstick_cross = (qstick.rolling(2).mean() > 0).astype(int) - (qstick.rolling(2).mean() < 0).astype(int)
+    return pd.Series(qstick_cross, name='QSTICK_CROSS')
+
+def factor_force_index(df, n):
+    force = df['Close'].diff() * df['Volume']
+    force_ema = force.ewm(span=n).mean()
+    return pd.Series(force_ema, name=f'FORCE_INDEX_{n}')
+
+def factor_elder_ray(df, n):
+    bull_power = df['High'] - df['Close'].shift(n)
+    bear_power = df['Low'] - df['Close'].shift(n)
+    return pd.Series(bull_power, name=f'BULL_POWER_{n}'), pd.Series(bear_power, name=f'BEAR_POWER_{n}')
+
+def factor_price_volume_corr(df, n):
+    price = df['Close'].pct_change()
+    volume = df['Volume'].pct_change()
+    corr = price.rolling(n).corr(volume)
+    return pd.Series(corr, name=f'PriceVolumeCorr_{n}')
+
+def factor_price_volume_cointegration(df, n):
+    price = df['Close']
+    volume = df['Volume']
+    _, pvalue, _ = coint(price[-n:], volume[-n:])
+    return pd.Series(pvalue, index=[df.index[-1]], name=f'PriceVolumeCointegration_{n}')
+
+def factor_sma_crossover(df, n1, n2):
+    sma1 = df['Close'].rolling(n1).mean()
+    sma2 = df['Close'].rolling(n2).mean()
+    crossover = (sma1 > sma2).astype(int) - (sma1 < sma2).astype(int)
+    return pd.Series(crossover, name=f'SMACrossover_{n1}_{n2}')
+
+def factor_price_high_low(df, n):
+    high = (df['High'] == df['High'].rolling(n).max()).astype(int)
+    low = (df['Low'] == df['Low'].rolling(n).min()).astype(int)
+    return pd.Series(high - low, name=f'PriceHighLow_{n}')
+
+def factor_volume_high_low(df, n):
+    high = (df['Volume'] == df['Volume'].rolling(n).max()).astype(int)
+    low = (df['Volume'] == df['Volume'].rolling(n).min()).astype(int)
+    return pd.Series(high - low, name=f'VolumeHighLow_{n}')
+
+def factor_price_volatility(df, n):
+    return pd.Series(df['Close'].pct_change().rolling(n).std(), name=f'PriceVolatility_{n}')
+
+def factor_volume_volatility(df, n):  
+    return pd.Series(df['Volume'].pct_change().rolling(n).std(), name=f'VolumeVolatility_{n}')
+
+def factor_order_imbalance(df, n):
+    buy_volume = df['Volume'][df['Close'] > df['Open']]  
+    sell_volume = df['Volume'][df['Close'] < df['Open']]
+    buy_volume = buy_volume.fillna(0)
+    sell_volume = sell_volume.fillna(0)
+    imbalance = (buy_volume - sell_volume).rolling(n).sum() / df['Volume'].rolling(n).sum()
+    return pd.Series(imbalance, name=f'OrderImbalance_{n}')
+
+def factor_return_skewness(df, n):
+    return pd.Series(df['Close'].pct_change().rolling(n).apply(skew), name=f'ReturnSkewness_{n}')
+
+def factor_return_kurtosis(df, n):
+    return pd.Series(df['Close'].pct_change().rolling(n).apply(kurtosis), name=f'ReturnKurtosis_{n}')
+
+def factor_abnormal_volume(df, n):
+    return pd.Series(df['Volume'] / df['Volume'].rolling(n).mean(), name=f'AbnormalVolume_{n}')
+
+def factor_price_cog(df, n):
+    high = df['High'].rolling(n).mean()
+    low = df['Low'].rolling(n).mean()
+    return pd.Series((high + low) / 2, name=f'PriceCOG_{n}')
+
+def factor_vwap(df, n):
+    vwap = (df['Close'] * df['Volume']).rolling(n).sum() / df['Volume'].rolling(n).sum()
+    return pd.Series(df['Close'] / vwap, name=f'VWAP_{n}')
+
+def factor_money_flow(df, n):
+    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+    money_flow = typical_price * df['Volume'] 
+    mf_ratio = money_flow.rolling(n).sum() / df['Volume'].rolling(n).sum()
+    return pd.Series(mf_ratio, name=f'MoneyFlow_{n}')
+
+def factor_psy_line(df, n):
+    psy_line = df['Close'].rolling(n).apply(lambda x: sum(x > x.shift(1)) / n)
+    return pd.Series(psy_line, name=f'PSY_{n}')
+
+def factor_pos_neg_volume(df, n):
+    pos_volume = df['Volume'][df['Close'] > df['Close'].shift(1)].rolling(n).sum()
+    neg_volume = df['Volume'][df['Close'] < df['Close'].shift(1)].rolling(n).sum()
+    return pd.Series(pos_volume / neg_volume, name=f'PosNegVolume_{n}')
+
+def factor_avg_candle_body(df, n):
+    candle_body = abs(df['Close'] - df['Open'])
+    return pd.Series(candle_body.rolling(n).mean(), name=f'AvgCandleBody_{n}')
+
+def factor_avg_candle_shadow(df, n):
+    upper_shadow = df['High'] - df[['Close', 'Open']].max(axis=1)
+    lower_shadow = df[['Close', 'Open']].min(axis=1) - df['Low']
+    total_shadow = (upper_shadow + lower_shadow).rolling(n).mean()
+    return pd.Series(total_shadow, name=f'AvgCandleShadow_{n}')
+
+def factor_bullish_candle_ratio(df, n):
+    bullish_ratio = df['Close'].rolling(n).apply(lambda x: sum(x > x.shift(1)) / n)
+    return pd.Series(bullish_ratio, name=f'BullishCandleRatio_{n}')
+
+def factor_information_ratio(df, n):
+    returns = df['Close'].pct_change()
+    ir = returns.rolling(n).mean() / returns.rolling(n).std()
+    return pd.Series(ir, name=f'InformationRatio_{n}')
+
+def factor_rs_ratio(df, n1, n2):
+    rs = df['Close'].rolling(n1).mean() / df['Close'].rolling(n2).mean()
+    return pd.Series(rs, name=f'RSRatio_{n1}_{n2}')
+
+def factor_turnover_rate(df, n):
+    turnover_rate = df['Volume'].rolling(n).sum() / df['Volume'].rolling(n).mean()
+    return pd.Series(turnover_rate, name=f'TurnoverRate_{n}')
+
+def factor_volume_burst(df, n):
+    volume_burst = df['Volume'] / df['Volume'].rolling(n).max()
+    return pd.Series(volume_burst, name=f'VolumeBurst_{n}')
+
+def factor_price_breakout(df, n):
+    breakout = (df['Close'] - df['Close'].shift(n)) / df['Close'].shift(n)
+    return pd.Series(breakout, name=f'PriceBreakout_{n}')
+
+def factor_price_oscillation(df, n):
+    osc_range = (df['High'].rolling(n).max() - df['Low'].rolling(n).min()) / df['Close'].rolling(n).mean()
+    return pd.Series(osc_range, name=f'PriceOscillation_{n}')
+
+def factor_volume_price_divergence(df, n):
+    price_change = df['Close'].pct_change(n)
+    volume_change = df['Volume'].pct_change(n)
+    divergence = price_change - volume_change
+    return pd.Series(divergence, name=f'VolumePriceDivergence_{n}')
+
+def factor_smart_money_flow(df, n):
+    smart_money_flow = df['Close'] * df['Volume'] * (df['Close'] - df['Open']) / (df['High'] - df['Low'])
+    return pd.Series(smart_money_flow.rolling(n).sum(), name=f'SmartMoneyFlow_{n}')
+
+def factor_related_market_momentum(df, related_df, n):
+    related_return = related_df['Close'].pct_change(n)
+    return pd.Series(related_return, name=f'RelatedMarketMomentum_{n}')
+
+def factor_related_market_volatility(df, related_df, n):  
+    related_volatility = related_df['Close'].pct_change().rolling(n).std()
+    return pd.Series(related_volatility, name=f'RelatedMarketVolatility_{n}')
+
+def factor_related_market_liquidity(df, related_df, n):
+    related_liquidity = related_df['Volume'].rolling(n).mean()
+    return pd.Series(related_liquidity, name=f'RelatedMarketLiquidity_{n}')
+
+def factor_ml_prediction(df, n, target_col='Close', feature_cols=['Open', 'High', 'Low', 'Volume']):
+    X = df[feature_cols].values
+    y = df[target_col].pct_change(n).shift(-n).values
+
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X[:-n], y[:-n])
+    prediction = model.predict(X[-n:])
+
+    return pd.Series(prediction, index=df.index[-n:], name=f'MLPrediction_{n}')
+
+def factor_cross_asset_momentum(df, related_df, n):  
+    return_diff = df['Close'].pct_change(n) - related_df['Close'].pct_change(n)
+    return pd.Series(return_diff, name=f'CrossAssetMomentum_{n}')
+
+def factor_cross_asset_correlation(df, related_df, n):
+    correlation = df['Close'].pct_change().rolling(n).corr(related_df['Close'].pct_change())
+    return pd.Series(correlation, name=f'CrossAssetCorrelation_{n}')
+
+def factor_sector_rotation(df, sector_data, n):
+    sector_return = sector_data.pct_change(n)
+    sector_rank = sector_return.rank(axis=1, ascending=False)
+    return pd.Series(sector_rank.mean(axis=1), name=f'SectorRotation_{n}')
+
+def factor_economic_policy_uncertainty(df, epu_data, n):
+    epu_change = epu_data.pct_change(n)
+    return pd.Series(epu_change, name=f'EconomicPolicyUncertainty_{n}')
+
+def factor_investor_sentiment(df, sentiment_data, n):
+    sentiment_change = sentiment_data.pct_change(n)
+    return pd.Series(sentiment_change, name=f'InvestorSentiment_{n}')
+
+def factor_complex_network_centrality(df, network_data, n):
+    network = nx.from_pandas_adjacency(network_data)
+    centrality = nx.eigenvector_centrality(network)
+    centrality_series = pd.Series(centrality)
+    return pd.Series(centrality_series.rolling(n).mean(), name=f'ComplexNetworkCentrality_{n}')
+
+def factor_momentum_reversal(df, n):  
+    return_sign = np.sign(df['Close'].pct_change(n))
+    reversal = (return_sign != return_sign.shift(1)).astype(int)
+    return pd.Series(reversal, name=f'MomentumReversal_{n}')
+
+def factor_implied_volatility(df, option_data, n):
+    iv_change = option_data['ImpliedVolatility'].pct_change(n)
+    return pd.Series(iv_change, name=f'ImpliedVolatility_{n}')
+
+def factor_implied_liquidity(df, option_data, n):  
+    iv_spread = option_data['AskImpliedVolatility'] - option_data['BidImpliedVolatility']
+    iv_spread_change = iv_spread.pct_change(n)
+    return pd.Series(iv_spread_change, name=f'ImpliedLiquidity_{n}')
+
+def factor_information_asymmetry(df, order_data, n):
+    volume_imbalance = order_data['BuyVolume'] / (order_data['BuyVolume'] + order_data['SellVolume'])
+    volume_imbalance_change = volume_imbalance.pct_change(n)
+    return pd.Series(volume_imbalance_change, name=f'InformationAsymmetry_{n}')
+
+def factor_limit_order_flow(df, order_data, n):
+    order_flow = order_data['LimitBuyVolume'] - order_data['LimitSellVolume']
+    order_flow_ma = order_flow.rolling(n).mean()
+    return pd.Series(order_flow_ma, name=f'LimitOrderFlow_{n}')
+
+def factor_sentiment_bias(df, news_data, n):
+    sentiment_score = news_data['SentimentScore']
+    sentiment_bias = sentiment_score - sentiment_score.rolling(n).mean()
+    return pd.Series(sentiment_bias, name=f'SentimentBias_{n}')
+
+def factor_jump_risk(df, n, threshold=0.05):
+    jump = (df['High'] - df['Low']) / df['Open'] > threshold
+    jump_ma = jump.rolling(n).mean()
+    return pd.Series(jump_ma, name=f'JumpRisk_{n}_{threshold}')
+
+def factor_news_sentiment(df, sentiment_data, n):
+    sentiment_score = sentiment_data.rolling(n).mean()
+    return pd.Series(sentiment_score, name=f'NewsSentiment_{n}')
+
+def factor_social_media_attention(df, social_data, n):
+    attention_score = social_data.rolling(n).sum()
+    return pd.Series(attention_score, name=f'SocialMediaAttention_{n}')
+
+def factor_satellite_image(df, image_data, n):
+    image_feature = image_data.rolling(n).mean()
+    return pd.Series(image_feature, name=f'SatelliteImage_{n}')
+
+def factor_deep_learning_feature(df, n, feature_cols=['Open', 'High', 'Low', 'Close', 'Volume']):
+    X = df[feature_cols].values.reshape(-1, n, len(feature_cols))
+
+    model = tf.keras.Sequential([
+        tf.keras.layers.LSTM(64, input_shape=(n, len(feature_cols))),
+        tf.keras.layers.Dense(1)
+    ])
+
+    model.compile(optimizer='adam', loss='mse')
+    model.fit(X[:-1], df['Close'].pct_change().shift(-1).values[:-1], epochs=50, batch_size=32, verbose=0)
+
+    feature = model.predict(X[-1:]).squeeze()
+    return pd.Series(feature, index=[df.index[-1]], name=f'DeepLearningFeature_{n}')
+
+def factor_abnormal_trading_pattern(df, n, threshold=2):
+    volume_mean = df['Volume'].rolling(n).mean()
+    volume_std = df['Volume'].rolling(n).std()
+    abnormal_volume = (df['Volume'] > volume_mean + threshold * volume_std).astype(int)
+    return pd.Series(abnormal_volume, name=f'AbnormalTradingPattern_{n}_{threshold}')
+
+def factor_fractal_dimension(df, n, method='hausdorff'):
+    price = df['Close'].values
+    rs = np.log(price[1:] / price[:-1])
+    if method == 'hausdorff':
+        fd = 2 - np.log(np.sum(np.absolute(rs))) / np.log(n)
+    elif method == 'hurst':
+        fd = 2 - hurst_exponent(rs)
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+    return pd.Series(fd, index=[df.index[-1]], name=f'FractalDimension_{n}_{method}')
+
+def hurst_exponent(time_series):
+    lags = range(2, 100)
+    tau = [np.sqrt(np.std(np.subtract(time_series[lag:], time_series[:-lag]))) for lag in lags]
+    poly = np.polyfit(np.log(lags), np.log(tau), 1)
+    return poly[0] * 2.0
+
+def factor_ubiquitous_quantification(df, ubiq_data, n):
+    ubiq_factor = ubiq_data.rolling(n).mean()
+    return pd.Series(ubiq_factor, name=f'UbiquitousQuantification_{n}')
+
+def factor_generational_transmission(df, parent_data, n):
+    gt_factor = parent_data.shift(n).rolling(n).corr(df['Close'])
+    return pd.Series(gt_factor, name=f'GenerationalTransmission_{n}')
+
+def factor_biological_rhythm(df, rhythm_data, n):
+    rhythm_factor = rhythm_data.rolling(n).apply(lambda x: signal.correlate(x, df['Close'][-n:]).mean())
+    return pd.Series(rhythm_factor, name=f'BiologicalRhythm_{n}')
+
+def factor_swarm_behavior(df, swarm_data, n):
+    swarm_factor = swarm_data.rolling(n).apply(lambda x: np.mean([cosine_similarity(x[-1], y) for y in x]))
+    return pd.Series(swarm_factor, name=f'SwarmBehavior_{n}')
+
+def factor_volatility_skewness(df, n):
+    returns = df['Close'].pct_change()
+    rolling_skewness = returns.rolling(n).skew()
+    return pd.Series(rolling_skewness, name=f'VolatilitySkewness_{n}')
+
+def factor_volatility_kurtosis(df, n):
+    returns = df['Close'].pct_change()
+    rolling_kurtosis = returns.rolling(n).kurt()
+    return pd.Series(rolling_kurtosis, name=f'VolatilityKurtosis_{n}')
+
+def factor_abnormal_volume_ratio(df, n, threshold=2):
+    volume = df['Volume']
+    median_volume = volume.rolling(n).median()
+    abnormal_volume = (volume > threshold * median_volume).astype(int)
+    abnormal_volume_ratio = abnormal_volume.rolling(n).mean()
+    return pd.Series(abnormal_volume_ratio, name=f'AbnormalVolumeRatio_{n}_{threshold}')
+
+def factor_volume_distribution_entropy(df, n):
+    volume = df['Volume'].values
+    windows = np.lib.stride_tricks.sliding_window_view(volume, n)
+    entropy_series = np.apply_along_axis(lambda x: entropy(x / x.sum()), 1, windows)
+    entropy_series = pd.Series(entropy_series, index=df.index[n-1:])
+    return pd.Series(entropy_series, name=f'VolumeDistributionEntropy_{n}')
+
+def factor_return_distribution_entropy(df, n):
+    returns = df['Close'].pct_change().values
+    windows = np.lib.stride_tricks.sliding_window_view(returns, n)
+    normalized_windows = np.apply_along_axis(lambda x: (x - x.mean()) / x.std(), 1, windows)
+    entropy_series = np.apply_along_axis(lambda x: entropy(x), 1, normalized_windows)
+    entropy_series = pd.Series(entropy_series, index=df.index[n-1:])
+    return pd.Series(entropy_series, name=f'ReturnDistributionEntropy_{n}')
+
+def factor_price_acceleration(df, n):
+    returns = df['Close'].pct_change()
+    acceleration = returns.diff(n)
+    return pd.Series(acceleration, name=f'PriceAcceleration_{n}')
+
+def factor_volume_acceleration(df, n):
+    volume_change = df['Volume'].pct_change()
+    acceleration = volume_change.diff(n)
+    return pd.Series(acceleration, name=f'VolumeAcceleration_{n}')
+
+def factor_price_volume_divergence(df, n):
+    returns = df['Close'].pct_change()
+    volume_change = df['Volume'].pct_change()
+    divergence = returns - volume_change
+    divergence_ma = divergence.rolling(n).mean()
+    return pd.Series(divergence_ma, name=f'PriceVolumeDivergence_{n}')
+
+def factor_intraday_high_low_spread(df, n):
+    intraday_spread = (df['High'] - df['Low']) / df['Open']
+    intraday_spread_ma = intraday_spread.rolling(n).mean()
+    return pd.Series(intraday_spread_ma, name=f'IntradayHighLowSpread_{n}')
+
+def factor_extreme_trading_volume(df, n, threshold=3):
+    volume = df['Volume']
+    median_volume = volume.rolling(n).median()
+    extreme_volume = (volume > threshold * median_volume).astype(int)
+    return pd.Series(extreme_volume, name=f'ExtremeTradingVolume_{n}_{threshold}')
+
+def factor_price_volatility_skewness(df, n):
+    returns = df['Close'].pct_change()
+    rolling_volatility = returns.rolling(n).std()
+    volatility_skewness = rolling_volatility.rolling(n).apply(skew)
+    return pd.Series(volatility_skewness, name=f'PriceVolatilitySkewness_{n}')
+
+def factor_market_smile(df, n):
+    high_low_range = df['High'] - df['Low']
+    open_close_range = abs(df['Close'] - df['Open'])
+    smile = open_close_range / high_low_range
+    smile_ma = smile.rolling(n).mean()
+    return pd.Series(smile_ma, name=f'MarketSmile_{n}')
+
+def factor_overnight_price_gap(df, n):
+    overnight_gap = (df['Open'] - df['Close'].shift(1)) / df['Close'].shift(1)
+    overnight_gap_ma = overnight_gap.rolling(n).mean()
+    return pd.Series(overnight_gap_ma, name=f'OvernightPriceGap_{n}')
+
+def factor_opening_trading_volume_ratio(df, n):
+    opening_volume = df['Volume'].rolling(n).apply(lambda x: x.iloc[0] if len(x) >= n else np.nan)
+    total_volume = df['Volume'].rolling(n).sum()
+    volume_ratio = opening_volume / total_volume
+    return pd.Series(volume_ratio, name=f'OpeningTradingVolumeRatio_{n}')
+
+def factor_price_center_of_gravity(df, n):
+    high, low, close = df['High'], df['Low'], df['Close']
+    center_of_gravity = (high + low + close) / 3
+    center_of_gravity_ratio = close / center_of_gravity.rolling(n).mean()
+    return pd.Series(center_of_gravity_ratio, name=f'PriceCenterOfGravity_{n}')
+
+def factor_volume_center_of_gravity(df, n):
+    high, low, volume = df['High'], df['Low'], df['Volume']
+    price_range = high - low
+    volume_center_of_gravity = (volume * (high + low) / 2).rolling(n).sum() / volume.rolling(n).sum()
+    volume_center_of_gravity_ratio = (high + low) / 2 / volume_center_of_gravity
+    return pd.Series(volume_center_of_gravity_ratio, name=f'VolumeCenterOfGravity_{n}')
+
+def factor_volatility_clustering(df, n):
+    returns = df['Close'].pct_change()
+    volatility = returns.rolling(n).std()
+    autocorrelation = volatility.rolling(n).apply(lambda x: x.autocorr(lag=1))
+    return pd.Series(autocorrelation, name=f'VolatilityClustering_{n}')
+
+def factor_volume_saturation(df, n):
+    volume = df['Volume']
+    volume_ma = volume.rolling(n).mean()
+    volume_saturation = volume / volume_ma
+    return pd.Series(volume_saturation, name=f'VolumeSaturation_{n}')
+
+def factor_skewness_change_rate(df, n):
+    returns = df['Close'].pct_change()
+    skewness = returns.rolling(n).skew()
+    skewness_change_rate = skewness.pct_change(n)
+    return pd.Series(skewness_change_rate, name=f'SkewnessChangeRate_{n}')
+
+def factor_kurtosis_change_rate(df, n):
+    returns = df['Close'].pct_change()
+    kurtosis = returns.rolling(n).kurt()
+    kurtosis_change_rate = kurtosis.pct_change(n)
+    return pd.Series(kurtosis_change_rate, name=f'KurtosisChangeRate_{n}')
+
+def factor_amplitude_change_rate(df, n):
+    amplitude = (df['High'] - df['Low']) / df['Open']
+    amplitude_change_rate = amplitude.pct_change(n)
+    return pd.Series(amplitude_change_rate, name=f'AmplitudeChangeRate_{n}')
+
+def factor_abnormal_trading_range(df, n, m):
+    trading_range = (df['High'] - df['Low']) / df['Open']
+    trading_range_ma = trading_range.rolling(n).mean()
+    abnormal_trading_range = (trading_range - trading_range_ma) / trading_range_ma
+    abnormal_trading_range_ma = abnormal_trading_range.rolling(m).mean()
+    return pd.Series(abnormal_trading_range_ma, name=f'AbnormalTradingRange_{n}_{m}')
+
+def factor_rsi_change_rate(df, n, m):
+    returns = df['Close'].pct_change()
+    rsi = talib.RSI(df['Close'], timeperiod=n)
+    rsi_change_rate = rsi.pct_change(m)
+    return pd.Series(rsi_change_rate, name=f'RSIChangeRate_{n}_{m}')
+
+def factor_composite_momentum(df, n1, n2, n3):
+    returns = df['Close'].pct_change()
+    momentum1 = returns.rolling(n1).mean()
+    momentum2 = returns.rolling(n2).mean()
+    momentum3 = returns.rolling(n3).mean()
+    composite_momentum = (momentum1 + momentum2 + momentum3) / 3
+    return pd.Series(composite_momentum, name=f'CompositeMomentum_{n1}_{n2}_{n3}')
+
+def factor_volume_weighted_momentum(df, n):
+    returns = df['Close'].pct_change()
+    volume = df['Volume']
+    weighted_returns = returns * volume
+    weighted_momentum = weighted_returns.rolling(n).sum() / volume.rolling(n).sum()
+    return pd.Series(weighted_momentum, name=f'VolumeWeightedMomentum_{n}')
+
+def factor_residual_momentum(df, n):
+    returns = df['Close'].pct_change()
+    rolling_returns = returns.rolling(n)
+    residual_momentum = pd.Series(index=df.index)
+
+    for i in range(n, len(df)):
+        X = range(n)
+        y = rolling_returns.iloc[i-n:i].values
+        model = LinearRegression().fit(np.vander(X, 2), y)
+        residual = y[-1] - model.predict(np.array([[n-1, (n-1)**2]]))
+        residual_momentum.iloc[i] = residual
+
+    return pd.Series(residual_momentum, name=f'ResidualMomentum_{n}')
+
+def factor_half_life_momentum(df, n, half_life):
+    returns = df['Close'].pct_change()
+    weights = np.exp(np.linspace(-1, 0, n))
+    weights = weights / weights.sum()
+    half_life_momentum = returns.rolling(n).apply(lambda x: np.dot(x, weights))
+    return pd.Series(half_life_momentum, name=f'HalfLifeMomentum_{n}_{half_life}')
+
+def factor_long_short_headings(df, n):
+    returns = df['Close'].pct_change()
+    long_returns = returns[returns > 0]
+    short_returns = returns[returns < 0]
+    long_headings = long_returns.rolling(n).apply(lambda x: sum(x > x.mean()) / n)
+    short_headings = short_returns.rolling(n).apply(lambda x: sum(x < x.mean()) / n)
+    return pd.Series(long_headings - short_headings, name=f'LongShortHeadings_{n}')
+
+def factor_volume_volatility_ratio(df, n):
+    returns = df['Close'].pct_change()
+    volatility = returns.rolling(n).std()
+    volume = df['Volume']
+    ratio = volume / (volatility * df['Close'])
+    return pd.Series(ratio, name=f'VolumeVolatilityRatio_{n}')
+
+def factor_momentum_reversal_combo(df, n_mom, n_rev):
+    returns = df['Close'].pct_change()
+    momentum = returns.rolling(n_mom).mean()
+    reversal = -returns.rolling(n_rev).mean()
+    combo = momentum + reversal
+    return pd.Series(combo, name=f'MomentumReversalCombo_{n_mom}_{n_rev}')
+
+def factor_price_volume_correlation(df, n):
+    returns = df['Close'].pct_change()
+    volume_change = df['Volume'].pct_change()
+    corr = returns.rolling(n).corr(volume_change)
+    return pd.Series(corr, name=f'PriceVolumeCorrelation_{n}')
+
+def factor_gap(df):
+    gap = (df['Open'] - df['Close'].shift(1)) / df['Close'].shift(1)
+    return pd.Series(gap, name='Gap')
+
+def factor_intraday_high_low(df, n):
+    high_low_range = (df['High'] - df['Low']) / df['Close'].shift(1)
+    intraday_high_low = high_low_range.rolling(n).mean()
+    return pd.Series(intraday_high_low, name=f'IntradayHighLow_{n}')
+
+def factor_overnight_return(df):
+    overnight_return = (df['Open'] - df['Close'].shift(1)) / df['Close'].shift(1)
+    return pd.Series(overnight_return, name='OvernightReturn')
+
+
+def factor_opening_volume(df, n):
+    opening_volume = df['Volume'].rolling(n).apply(lambda x: x.iloc[0] if len(x) >= n else np.nan)
+    return pd.Series(opening_volume, name=f'OpeningVolume_{n}')
+
+def factor_closing_volume(df, n):
+    closing_volume = df['Volume'].rolling(n).apply(lambda x: x.iloc[-1] if len(x) >= n else np.nan)
+    return pd.Series(closing_volume, name=f'ClosingVolume_{n}')
+
+def factor_price_drawdown(df, n):
+    rolling_max = df['Close'].rolling(n).max()
+    drawdown = (df['Close'] - rolling_max) / rolling_max
+    return pd.Series(drawdown, name=f'PriceDrawdown_{n}')
+
+def factor_volume_drawdown(df, n):
+    rolling_max = df['Volume'].rolling(n).max()
+    drawdown = (df['Volume'] - rolling_max) / rolling_max
+    return pd.Series(drawdown, name=f'VolumeDrawdown_{n}')
+
+def factor_volume_volatility_skewness(df, n):
+    volume_change = df['Volume'].pct_change()
+    rolling_volatility = volume_change.rolling(n).std()
+    volatility_skewness = rolling_volatility.rolling(n).apply(skew)
+    return pd.Series(volatility_skewness, name=f'VolumeVolatilitySkewness_{n}')
+
+def factor_price_momentum_skewness(df, n):
+    returns = df['Close'].pct_change()
+    rolling_momentum = returns.rolling(n).mean()
+    momentum_skewness = rolling_momentum.rolling(n).apply(skew)
+    return pd.Series(momentum_skewness, name=f'PriceMomentumSkewness_{n}')
+
+def factor_multi_timescale(df, n_short, n_long):
+    """多时间尺度因子"""
+    returns_short = df['Close'].pct_change().rolling(n_short).mean()
+    returns_long = df['Close'].pct_change().rolling(n_long).mean()
+    multi_timescale = returns_short - returns_long
+    return pd.Series(multi_timescale, name=f'MultiTimescale_{n_short}_{n_long}')
+
+def factor_chaikin_osc(df, n1, n2):
+    """佳庆指标因子"""
+    ad = (2*df['Close'] - df['High'] - df['Low']) / (df['High'] - df['Low']) * df['Volume']
+    ad = ad.fillna(0)
+    osc = ad.ewm(n1).mean() - ad.ewm(n2).mean()
+    return pd.Series(osc, name=f'ChaikinOsc_{n1}_{n2}')
+open = df['Open']
+high = df['High'] 
+low = df['Low']
+close = df['Close']
+volume = df['Volume']
+
+factor_df = pd.DataFrame()
+factor_names = []
+
+# In this part, we generate factors using the defined factor functions
+for n in [5,10,20,30,60]:
+    print('------------------------------------------------------------------------------------------',1)
+    factor_df[f'WMA_{n}'] = factor_wma(df, n)
+    factor_names.append(f'WMA_{n}')
+
+    factor_df[f'CMO_{n}'] = factor_cmo(df, n)
+    factor_names.append(f'CMO_{n}')
+
+    factor_df[f'ADX_{n}'] = factor_adx(df, n)
+    factor_names.append(f'ADX_{n}')
+
+    factor_df[f'BB_WIDTH_{n}'] = factor_bb_width(df, n)
+    factor_names.append(f'BB_WIDTH_{n}')
+
+    factor_df[f'BB_PERCENT_{n}'] = factor_bb_percent(df, n)
+    factor_names.append(f'BB_PERCENT_{n}')
+
+    factor_df[f'DBCD_{n}'] = factor_dbcd(df, n)
+    factor_names.append(f'DBCD_{n}')
+
+    print('------------------------------------------------------------------------------------------',2)
+    factor_df[f'TRIX_{n}'] = factor_trix(df, n)
+    factor_names.append(f'TRIX_{n}')
+
+    factor_df[f'VWAP_{n}'] = factor_vwap(df, n)
+    factor_names.append(f'VWAP_{n}')
+
+    factor_df[f'DPO_{n}'] = factor_dpo(df, n)
+    factor_names.append(f'DPO_{n}')
+
+    factor_df[f'VIDYA_{n}'] = factor_vidya(df, n)
+    factor_names.append(f'VIDYA_{n}')
+
+    factor_df[f'QSTICK_{n}'] = factor_qstick(df, n)
+    factor_names.append(f'QSTICK_{n}')
+
+    factor_df[f'MASSO_{n}'] = factor_masso(df, n)
+    factor_names.append(f'MASSO_{n}')
+    
+    print('------------------------------------------------------------------------------------------',5)
+    factor_df[f'JumpRisk_{n}_0.05'] = factor_jump_risk(df, n, threshold=0.05)
+    factor_names.append(f'JumpRisk_{n}_0.05')
+    
+    factor_df[f'JumpRisk_{n}_0.1'] = factor_jump_risk(df, n, threshold=0.1)
+    factor_names.append(f'JumpRisk_{n}_0.1')
+    
+    factor_df[f'FractalDimension_{n}_hausdorff'] = factor_fractal_dimension(df, n, method='hausdorff')
+    factor_names.append(f'FractalDimension_{n}_hausdorff')
+    
+    factor_df[f'FractalDimension_{n}_hurst'] = factor_fractal_dimension(df, n, method='hurst')
+    factor_names.append(f'FractalDimension_{n}_hurst')
+    
+    factor_df[f'AbnormalTradingPattern_{n}_2'] = factor_abnormal_trading_pattern(df, n, threshold=2)
+    factor_names.append(f'AbnormalTradingPattern_{n}_2')
+    
+    factor_df[f'AbnormalTradingPattern_{n}_3'] = factor_abnormal_trading_pattern(df, n, threshold=3)
+    factor_names.append(f'AbnormalTradingPattern_{n}_3')
+
+print('------------------------------------------------------------------------------------------',7)
+    
+for n_short, n_long in [(5, 20), (10, 60), (20, 120)]:
+    factor_df[f'MultiTimescale_{n_short}_{n_long}'] = factor_multi_timescale(df, n_short, n_long)
+    factor_names.append(f'MultiTimescale_{n_short}_{n_long}')
+
+print('------------------------------------------------------------------------------------------',8)
+    
+for n, m1, m2 in [(9,3,3),(12,4,4),(24,8,8)]:
+    k, d = factor_kd(df, n, m1, m2)
+    factor_df[f'K_{n}_{m1}_{m2}'] = k
+    factor_df[f'D_{n}_{m1}_{m2}'] = d 
+    factor_names.append(f'K_{n}_{m1}_{m2}')
+    factor_names.append(f'D_{n}_{m1}_{m2}')
+print('------------------------------------------------------------------------------------------',9)
+
+factor_df['VPT'] = factor_vpt(df)
+factor_df['QSTICK_CROSS'] = factor_qstick_cross(df)
+factor_df['DEMARK_TRENDLINE'] = factor_demark_trendline(df)
+factor_df['UO'] = factor_uo(df)
+factor_df['AI'] = factor_ai(df)
+factor_df['GAP'] = factor_gap(df)
+factor_df['OvernightReturn'] = factor_overnight_return(df)
+
+
+
+factor_names.extend([ 'VPT', 'SAR', 'QSTICK_CROSS', 'DEMARK_TRENDLINE', 'UO', 'AI', 'GAP', 'OvernightReturn'])
+
+for n1, n2 in [(3,10),(6,20),(12,26)]:
+    factor_df[f'APO_{n1}_{n2}'] = factor_apo(df, n1, n2)
+    factor_df[f'VOSC_{n1}_{n2}'] = factor_vosc(df, n1, n2)
+    factor_df[f'ChaikinOsc_{n1}_{n2}'] = factor_chaikin_osc(df, n1, n2)
+    
+    factor_names.extend([f'APO_{n1}_{n2}', f'VOSC_{n1}_{n2}', f'ChaikinOsc_{n1}_{n2}'])
+
+for r1, r2, r3, r4, n1, n2, n3, n4 in [(10,15,20,30,10,10,10,15),(12,25,50,100,8,8,8,10)]:
+    kst, sig = factor_kst(df, r1, r2, r3, r4, n1, n2, n3, n4)
+    factor_df[f'KST_{r1}_{r2}_{r3}_{r4}_{n1}_{n2}_{n3}_{n4}'] = kst
+    factor_df[f'KST_SIGNAL_{r1}_{r2}_{r3}_{r4}_{n1}_{n2}_{n3}_{n4}'] = sig
+    factor_names.append(f'KST_{r1}_{r2}_{r3}_{r4}_{n1}_{n2}_{n3}_{n4}')
+    factor_names.append(f'KST_SIGNAL_{r1}_{r2}_{r3}_{r4}_{n1}_{n2}_{n3}_{n4}')
+print('------------------------------------------------------------------------------------------',10)
+
+for n in [5,10,20,30]:
+    plus_di, minus_di = factor_dmi(df, n)
+    factor_df[f'PLUS_DI_{n}'] = plus_di
+    factor_df[f'MINUS_DI_{n}'] = minus_di
+    factor_names.append(f'PLUS_DI_{n}')
+    factor_names.append(f'MINUS_DI_{n}')
+    
+    factor_df[f'MASS_INDEX_{n}'] = factor_mass_index(df, n)
+    factor_names.append(f'MASS_INDEX_{n}')
+    
+    factor_df[f'DISPARITY_INDEX_{n}'] = factor_disparity_index(df, n)
+    factor_names.append(f'DISPARITY_INDEX_{n}')
+
+    factor_df[f'CHOPPINESS_INDEX_{n}'] = factor_choppiness_index(df, n)
+    factor_names.append(f'CHOPPINESS_INDEX_{n}')
+    
+    factor_df[f'FORCE_INDEX_{n}'] = factor_force_index(df, n)
+    factor_names.append(f'FORCE_INDEX_{n}')
+    
+    bpw, mpw = factor_elder_ray(df, n)
+    factor_df[f'BULL_POWER_{n}'] = bpw
+    factor_df[f'BEAR_POWER_{n}'] = mpw
+    factor_names.append(f'BULL_POWER_{n}')
+    factor_names.append(f'BEAR_POWER_{n}')
+    
+    factor_df[f'PVT_EMA_{n}'] = factor_price_volume_trend(df, n)
+    factor_names.append(f'PVT_EMA_{n}')
+
+
+for n in [ 5,10, 20]:
+    
+    print('------------------------------------------------------------------------------------------',12)
+    factor_df[f'VHF_{n}'] = factor_vhf(df, n)
+    factor_names.append(f'VHF_{n}')
+
+    factor_df[f'MFI_{n}'] = factor_mfi(df, n)  
+    factor_names.append(f'MFI_{n}')
+
+    for k in [1, 2, 3]:
+        upper, mid, lower = factor_boll(df, n, k)
+        factor_df[f'BOLL_UPPER_{n}_{k}'] = upper
+        factor_df[f'BOLL_MID_{n}_{k}'] = mid
+        factor_df[f'BOLL_LOWER_{n}_{k}'] = lower
+        factor_names.append(f'BOLL_UPPER_{n}_{k}')
+        factor_names.append(f'BOLL_MID_{n}_{k}')
+        factor_names.append(f'BOLL_LOWER_{n}_{k}')
+
+    print('------------------------------------------------------------------------------------------',13)
+    for m in [10, 20, 60]:
+        upper, mid, lower = factor_atr_bands(df, n, m)
+        factor_df[f'ATR_UPPER_{n}_{m}'] = upper
+        factor_df[f'ATR_MIDDLE_{n}_{m}'] = mid 
+        factor_df[f'ATR_LOWER_{n}_{m}'] = lower
+        factor_names.append(f'ATR_UPPER_{n}_{m}')
+        factor_names.append(f'ATR_MIDDLE_{n}_{m}')
+        factor_names.append(f'ATR_LOWER_{n}_{m}')
+
+    factor_df[f'CHAIKIN_VOLATILITY_{n}'] = factor_chaikin_volatility(df, n)
+    factor_names.append(f'CHAIKIN_VOLATILITY_{n}')
+
+    factor_df[f'VOLATILITY_RATIO_{n}'] = factor_volatility_ratio(df, n)
+    factor_names.append(f'VOLATILITY_RATIO_{n}')
+
+    factor_df[f'EOM_{n}'] = factor_eom(df, n)
+    factor_names.append(f'EOM_{n}')
+
+    factor_df[f'COPP_{n}'] = factor_copp(df, n)
+    factor_names.append(f'COPP_{n}')
+
+    print('------------------------------------------------------------------------------------------',14)
+    upper, mid, lower = factor_keltner_channels(df, n)
+    factor_df[f'KELTNER_UPPER_{n}'] = upper
+    factor_df[f'KELTNER_MIDDLE_{n}'] = mid
+    factor_df[f'KELTNER_LOWER_{n}'] = lower
+    factor_names.append(f'KELTNER_UPPER_{n}')
+    factor_names.append(f'KELTNER_MIDDLE_{n}')
+    factor_names.append(f'KELTNER_LOWER_{n}')
+
+    factor_df[f'IntradayHighLow_{n}'] = factor_intraday_high_low(df, n)
+    factor_names.append(f'IntradayHighLow_{n}')
+
+    factor_df[f'OpeningVolume_{n}'] = factor_opening_volume(df, n)
+    factor_df[f'ClosingVolume_{n}'] = factor_closing_volume(df, n)
+    factor_names.append(f'OpeningVolume_{n}')
+    factor_names.append(f'ClosingVolume_{n}')
+
+    factor_df[f'PriceDrawdown_{n}'] = factor_price_drawdown(df, n)
+    factor_df[f'VolumeDrawdown_{n}'] = factor_volume_drawdown(df, n)
+    factor_names.append(f'PriceDrawdown_{n}')
+    factor_names.append(f'VolumeDrawdown_{n}')
+    print('------------------------------------------------------------------------------------------',15)
+    
+    for m in [3, 6, 12]:
+        factor_df[f'KC_UPPER_{n}_{m}'], factor_df[f'KC_LOWER_{n}_{m}'] = factor_kc(df, n, m)  
+        factor_names.append(f'KC_UPPER_{n}_{m}')
+        factor_names.append(f'KC_LOWER_{n}_{m}')
+        
+    for threshold in [0.05, 0.1, 0.15]:
+        factor_df[f'MarketSmile_{n}_{threshold}'] = factor_market_smile(df, n)
+        factor_names.append(f'MarketSmile_{n}_{threshold}')
+    
+    factor_df[f'OvernightPriceGap_{n}'] = factor_overnight_price_gap(df, n)
+    factor_names.append(f'OvernightPriceGap_{n}')
+    
+    factor_df[f'OpeningTradingVolumeRatio_{n}'] = factor_opening_trading_volume_ratio(df, n)
+    factor_names.append(f'OpeningTradingVolumeRatio_{n}')
+    
+    factor_df[f'PriceCenterOfGravity_{n}'] = factor_price_center_of_gravity(df, n)
+    factor_names.append(f'PriceCenterOfGravity_{n}')
+    
+    factor_df[f'VolumeCenterOfGravity_{n}'] = factor_volume_center_of_gravity(df, n)
+    factor_names.append(f'VolumeCenterOfGravity_{n}')
+    
+    print('------------------------------------------------------------------------------------------',16)
+    factor_df[f'VolumeSaturation_{n}'] = factor_volume_saturation(df, n)
+    factor_names.append(f'VolumeSaturation_{n}')
+    
+    factor_df[f'SkewnessChangeRate_{n}'] = factor_skewness_change_rate(df, n)
+    factor_df[f'KurtosisChangeRate_{n}'] = factor_kurtosis_change_rate(df, n)
+    factor_names.append(f'SkewnessChangeRate_{n}')
+    factor_names.append(f'KurtosisChangeRate_{n}')
+    
+    factor_df[f'AmplitudeChangeRate_{n}'] = factor_amplitude_change_rate(df, n)
+    factor_names.append(f'AmplitudeChangeRate_{n}')
+    
+    for m in [5, 10, 20]:
+        factor_df[f'AbnormalTradingRange_{n}_{m}'] = factor_abnormal_trading_range(df, n, m)
+        factor_names.append(f'AbnormalTradingRange_{n}_{m}')
+        
+    for m in [5, 10, 20]:    
+        factor_df[f'RSIChangeRate_{n}_{m}'] = factor_rsi_change_rate(df, n, m)
+        factor_names.append(f'RSIChangeRate_{n}_{m}')
+print('------------------------------------------------------------------------------------------',17)
+            
+for n1, n2, n3 in [(5, 10, 20), (10, 20, 60), (20, 60, 120)]:
+    factor_df[f'CompositeMomentum_{n1}_{n2}_{n3}'] = factor_composite_momentum(df, n1, n2, n3)
+    factor_names.append(f'CompositeMomentum_{n1}_{n2}_{n3}')
+    
+for n in [5, 10, 20, 60]:
+    factor_df[f'VolumeWeightedMomentum_{n}'] = factor_volume_weighted_momentum(df, n)
+    factor_names.append(f'VolumeWeightedMomentum_{n}')
+    
+    #factor_df[f'ResidualMomentum_{n}'] = factor_residual_momentum(df, n)
+    #factor_names.append(f'ResidualMomentum_{n}')
+    
+    factor_df[f'HalfLifeMomentum_{n}_{0.5}'] = factor_half_life_momentum(df, n, half_life=0.5)
+    factor_df[f'HalfLifeMomentum_{n}_{0.7}'] = factor_half_life_momentum(df, n, half_life=0.7)
+    factor_names.append(f'HalfLifeMomentum_{n}_{0.5}')
+    factor_names.append(f'HalfLifeMomentum_{n}_{0.7}')
+    
+    factor_df[f'LongShortHeadings_{n}'] = factor_long_short_headings(df, n)
+    factor_names.append(f'LongShortHeadings_{n}')
+    
+    factor_df[f'VolumeVolatilityRatio_{n}'] = factor_volume_volatility_ratio(df, n)
+    factor_names.append(f'VolumeVolatilityRatio_{n}')
+
+for n_mom, n_rev in [(5, 20), (10, 60), (20, 120)]:
+    factor_df[f'MomentumReversalCombo_{n_mom}_{n_rev}'] = factor_momentum_reversal_combo(df, n_mom, n_rev)
+    factor_names.append(f'MomentumReversalCombo_{n_mom}_{n_rev}')
+print('------------------------------------------------------------------------------------------',18)
+    
+for n in [5, 10, 20, 60]:
+    factor_df[f'PriceVolumeCorrelation_{n}'] = factor_price_volume_correlation(df, n)
+    factor_names.append(f'PriceVolumeCorrelation_{n}')
+
+for n, m1, m2, t in [(9, 3, 3, 9), (14, 5, 5, 14), (21, 9, 9, 21)]:
+    stkm, stkd, stkld = factor_stoch(df, n, m1, m2, t)
+    factor_df[f'STOCH_K_{n}_{m1}_{m2}_{t}'] = stkm
+    factor_df[f'STOCH_D_{n}_{m1}_{m2}_{t}'] = stkd
+    factor_df[f'STOCH_LD_{n}_{m1}_{m2}_{t}'] = stkld
+    factor_names.append(f'STOCH_K_{n}_{m1}_{m2}_{t}')
+    factor_names.append(f'STOCH_D_{n}_{m1}_{m2}_{t}')
+    factor_names.append(f'STOCH_LD_{n}_{m1}_{m2}_{t}')
+
+for n in [10, 20, 30, 60]:
+    factor_df[f'WR_{n}'] = factor_wr(df, n)
+    factor_names.append(f'WR_{n}')
+
+    factor_df[f'MI_{n}'] = factor_mi(df, n)
+    factor_names.append(f'MI_{n}')
+print('------------------------------------------------------------------------------------------',19)
+    
+for threshold in [2, 3, 5]:
+    factor_df[f'AbnormalVolumeRatio_{threshold}'] = factor_abnormal_volume_ratio(df, 20, threshold)
+    factor_names.append(f'AbnormalVolumeRatio_{threshold}')
+
+factor_df['VolumeDistributionEntropy'] = factor_volume_distribution_entropy(df, 20)
+factor_df['ReturnDistributionEntropy'] = factor_return_distribution_entropy(df, 20)
+factor_names.append('VolumeDistributionEntropy')
+factor_names.append('ReturnDistributionEntropy')
+
+for n in [5, 10, 20, 60]:
+    factor_df[f'PriceAcceleration_{n}'] = factor_price_acceleration(df, n)
+    factor_df[f'VolumeAcceleration_{n}'] = factor_volume_acceleration(df, n)
+    factor_names.append(f'PriceAcceleration_{n}')
+    factor_names.append(f'VolumeAcceleration_{n}')
+
+    factor_df[f'PriceVolumeDivergence_{n}'] = factor_price_volume_divergence(df, n)
+    factor_names.append(f'PriceVolumeDivergence_{n}')
+    
+    factor_df[f'IntradayHighLowSpread_{n}'] = factor_intraday_high_low_spread(df, n)
+    factor_names.append(f'IntradayHighLowSpread_{n}')
+print('------------------------------------------------------------------------------------------',20)
+    
+for threshold in [2, 3, 5]:
+    factor_df[f'ExtremeTradingVolume_{threshold}'] = factor_extreme_trading_volume(df, 20, threshold)
+    factor_names.append(f'ExtremeTradingVolume_{threshold}')
+
+sym='BTC'
+
+#newdf.to_parquet(f'D:/generate_factors4_15mfutures{sym}USDT.parquet')
+
+factor_df.to_parquet(f'/hy-tmp/generate_factors4_spot1m{sym}.parquet')
