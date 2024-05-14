@@ -1,3 +1,199 @@
+import os
+
+os.environ['https_proxy'] = 'http://127.0.0.1:7890/'
+os.environ['http_proxy'] = 'http://127.0.0.1:7890/'
+def initialfunc(INPUT):
+    import requests
+    import json
+    import time
+    from datetime import datetime, timedelta
+    import os
+
+    os.environ['https_proxy'] = 'http://127.0.0.1:7890/'
+    os.environ['http_proxy'] = 'http://127.0.0.1:7890/'
+
+    # Binance API的基础URL
+    base_url = 'https://fapi.binance.com'
+
+    # 指定交易对,如{INPUT}USDC
+    symbol = f'{INPUT}USDC'
+
+    # 指定时间间隔,5m表示5分钟
+    interval = '1m'
+    now = datetime.now()
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+
+    # 获取当前日期的前一天
+    previous_day = now.date() - timedelta(days=1)
+
+    # 将前一天的日期设置为0点0分0秒
+    #start_time = datetime(previous_day.year, previous_day.month, previous_day.day, 6, 0, 0)
+    now=now.replace(minute=int(now.minute//1)*1,second=0,microsecond=0)
+    start_time=now - timedelta(minutes=1*200)
+    # 计算时间差并将其转换为秒数
+    time_diff = now - start_time
+    time_diff_seconds = time_diff.total_seconds()
+
+    # 计算5分钟的时间间隔对应的秒数
+    interval_seconds = 1 * 60
+
+    # 计算需要获取的数据条数
+    total_limit = int(time_diff_seconds // interval_seconds) + 1
+
+    # 每次请求获取的数据条数
+    batch_size = 1000
+
+    # 初始化开始时间戳
+    start_timestamp = int(start_time.timestamp() * 1000)
+    alldatas=[]
+    while total_limit > 0:
+        #try:
+            # 计算每次请求的数据条数
+            limit = min(batch_size, total_limit)
+
+            # 构建请求的URL
+            url = f'{base_url}/fapi/v1/klines?symbol={symbol}&interval={interval}&startTime={start_timestamp}&limit={limit}'
+
+            # 发送GET请求
+            response = requests.get(url)
+
+            # 解析响应的JSON数据
+            data = json.loads(response.text)
+            if len(data) > 0:
+                # 更新开始时间戳和剩余数据条数
+                start_timestamp = data[-1][0] + interval_seconds * 1000
+                total_limit -= limit
+            alldatas+=data
+
+            # 添加请求间隔时间,避免超过API限制
+            #time.sleep(1)
+    import datetime
+    rollbardf=pd.DataFrame(np.array(alldatas).astype(np.float64),columns=[['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time',
+    'quote_volume', 'count', 'taker_buy_volume', 'taker_buy_quote_volume',
+    'ignore']]).drop_duplicates()
+    rollbardf.index=range(len(rollbardf))
+
+    import datetime
+    rollbardf['time']=np.array([str(datetime.datetime.fromtimestamp(x/1000))+'+08:00' for x in rollbardf['open_time'].values.flatten()])
+
+    rollbardf['Open']=rollbardf['open']
+    rollbardf['Close']=rollbardf['close']
+    rollbardf['High']=rollbardf['high']
+    rollbardf['Low']=rollbardf['low']
+    rollbardf['Volume']=rollbardf['volume']
+
+    rollbardf=rollbardf.drop(['open_time','open','close','high','low','volume'],axis=1)
+    rollbardf.to_csv(f'autodl-tmp/{INPUT}rollbardf',index=False)
+
+def main(INPUT):
+    import requests
+    import json
+    import time
+    from datetime import datetime, timedelta
+    import os
+
+    os.environ['https_proxy'] = 'http://127.0.0.1:7890/'
+    os.environ['http_proxy'] = 'http://127.0.0.1:7890/'
+
+    # Binance API的基础URL
+    base_url = 'https://fapi.binance.com'
+
+    # 指定交易对,如{INPUT}USDC
+    symbol = f'{INPUT}USDC'
+
+    # 指定时间间隔,5m表示5分钟
+    interval = '1m'
+    now = datetime.now()
+    from datetime import datetime, timedelta
+
+    now = datetime.now()
+
+    # 将前一天的日期设置为0点0分0秒
+    start_time = now-timedelta(minutes=30)
+    start_time=start_time.replace(minute=int(start_time.minute//1)*1,second=0,microsecond=0)
+    now=now.replace(minute=int(now.minute//1)*1,second=0,microsecond=0)
+    # 计算时间差并将其转换为秒数
+    time_diff = now - start_time
+    time_diff_seconds = time_diff.total_seconds()
+
+    # 计算5分钟的时间间隔对应的秒数
+    interval_seconds = 1 * 60
+
+    # 计算需要获取的数据条数
+    total_limit = int(time_diff_seconds // interval_seconds) + 1
+
+    # 每次请求获取的数据条数
+    batch_size = 1000
+
+    # 初始化开始时间戳
+    start_timestamp = int(start_time.timestamp() * 1000)
+    alldatas=[]
+    while total_limit > 0:
+        #try:
+            # 计算每次请求的数据条数
+            limit = min(batch_size, total_limit)
+
+            # 构建请求的URL
+            url = f'{base_url}/fapi/v1/klines?symbol={symbol}&interval={interval}&startTime={start_timestamp}&limit={limit}'
+
+            # 发送GET请求
+            response = requests.get(url)
+
+            # 解析响应的JSON数据
+            data = json.loads(response.text)
+            if len(data) > 0:
+                # 更新开始时间戳和剩余数据条数
+                start_timestamp = data[-1][0] + interval_seconds * 1000
+                total_limit -= limit
+            alldatas+=data
+
+            # 添加请求间隔时间,避免超过API限制
+            #time.sleep(1)
+    import datetime
+    rollbardf=pd.DataFrame(np.array(alldatas).astype(np.float64),columns=[['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time',
+    'quote_volume', 'count', 'taker_buy_volume', 'taker_buy_quote_volume',
+    'ignore']]).drop_duplicates()
+    rollbardf.index=range(len(rollbardf))
+
+    import datetime
+    rollbardf['time']=[str(datetime.datetime.fromtimestamp(x/1000))+'+08:00' for x in rollbardf['open_time'].values.flatten()]
+    rollbardf['Open']=rollbardf['open']
+    rollbardf['Close']=rollbardf['close']
+    rollbardf['High']=rollbardf['high']
+    rollbardf['Low']=rollbardf['low']
+    rollbardf['Volume']=rollbardf['volume']
+
+    rollbardf=rollbardf.drop(['open_time','open','close','high','low','volume'],axis=1)
+    rollbardf.columns=['close_time', 'quote_volume', 'count', 'taker_buy_volume',
+       'taker_buy_quote_volume', 'ignore', 'time', 'Open', 'Close', 'High',
+       'Low', 'Volume']
+    tmp=pd.concat([pd.read_csv(f'autodl-tmp/{INPUT}rollbardf'),rollbardf],axis=0).drop_duplicates(subset='time',keep='last')
+    tmp.drop_duplicates(subset='time', keep='last').to_csv(f'autodl-tmp/{INPUT}rollbardf',index=False)
+initialfunc('BTC')
+import requests
+import json
+import time
+from datetime import datetime, timedelta
+import os
+
+os.environ['https_proxy'] = 'http://127.0.0.1:7890/'
+os.environ['http_proxy'] = 'http://127.0.0.1:7890/'
+def ultimate():
+    main('BTC')
+    mainspot()
+from apscheduler.schedulers.blocking import BlockingScheduler
+scheduler = BlockingScheduler()
+scheduler.add_job(ultimate, 'cron', minute='0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59') #实时下单
+scheduler.start()
+
+
+
+
+
+
+
 from ft import FT
 import os
 
