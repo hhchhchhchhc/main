@@ -150,7 +150,7 @@ class FT:
             features_data[col] = self.factor_fractal_dimension(d)
             self.feature_names.append(col)
             col = 'fractal_dimension_hurst_%d' % d
-            features_data[col] = self.factor_fractal_dimension(d,hurst)
+            features_data[col] = self.factor_fractal_dimension(d,'hurst')
             self.feature_names.append(col)
 
             # Smart Money Flow  
