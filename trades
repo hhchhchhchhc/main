@@ -1,0 +1,947 @@
+from statsmodels.tsa.ar_model import AutoReg
+from scipy.signal import welch
+import numpy as np
+import pandas as pd
+from scipy.signal import find_peaks, hilbert, coherence, argrelextrema
+from scipy.stats import kurtosis, skew, entropy, linregress
+from statsmodels.tsa.stattools import adfuller, coint, grangercausalitytests
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from statsmodels.tsa.arima.model import ARIMA
+from sklearn.decomposition import PCA, FastICA
+from sklearn.manifold import TSNE, MDS
+from sklearn.cluster import KMeans, DBSCAN
+from sklearn.covariance import EmpiricalCovariance, MinCovDet
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.metrics import mutual_info_score
+import networkx as nx
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+def calculate_all_factors(trades_df):
+    # 确保 'T' 是datetime列
+    trades_df['T'] = pd.to_datetime(trades_df['T'])
+    
+    def intraday_volatility(trades_df):
+        trades_df['hour'] = trades_df['T'].dt.hour
+        hourly_volatility = trades_df.groupby('hour')['p'].std()
+        trades_df['intraday_volatility'] = trades_df['hour'].map(hourly_volatility)
+        trades_df.drop('hour', axis=1, inplace=True)
+        return trades_df
+
+    def trade_size_imbalance(trades_df, window):
+        buy_size = trades_df[trades_df['m'] == True]['q'].rolling(window=window).sum()
+        sell_size = trades_df[trades_df['m'] == False]['q'].rolling(window=window).sum()
+        total_size = trades_df['q'].rolling(window=window).sum()
+        trades_df['trade_size_imbalance'] = (buy_size - sell_size) / total_size
+        return trades_df
+
+    def spread_volatility(trades_df, window):
+        trades_df['bid_ask_spread'] = trades_df['a'] - trades_df['p']
+        trades_df['spread_volatility'] = trades_df['bid_ask_spread'].rolling(window=window).std()
+        trades_df.drop('bid_ask_spread', axis=1, inplace=True)
+        return trades_df
+
+    def vwap_ratio(trades_df, window):
+        trades_df['vwap'] = (trades_df['p'] * trades_df['q']).rolling(window=window).sum() / trades_df['q'].rolling(window=window).sum()
+        trades_df['vwap_ratio'] = trades_df['p'] / trades_df['vwap']
+        trades_df.drop('vwap', axis=1, inplace=True)
+        return trades_df
+
+    from statsmodels.tsa.stattools import acf
+
+    def returns_autocorrelation(trades_df, window, lag):
+        trades_df['returns'] = trades_df['p'].pct_change()
+        autocorr = trades_df['returns'].rolling(window=window).apply(lambda x: acf(x, nlags=lag)[-1])
+        trades_df['returns_autocorrelation'] = autocorr
+        trades_df.drop('returns', axis=1, inplace=True)
+        return trades_df
+
+    def trend_strength(trades_df, window):
+        trades_df['trend'] = trades_df['p'].pct_change(periods=window)
+        trades_df['trend_strength'] = trades_df['trend'].abs()
+        trades_df.drop('trend', axis=1, inplace=True)
+        return trades_df
+
+    def ofi_factors(trades_df, window):
+        trades_df['signed_volume'] = trades_df['q'] * (2 * trades_df['m'] - 1)
+        trades_df['ofi'] = trades_df['signed_volume'].rolling(window=window).sum()
+        trades_df['ofi_mean'] = trades_df['ofi'].rolling(window=window).mean()
+        trades_df['ofi_std'] = trades_df['ofi'].rolling(window=window).std()
+        trades_df['ofi_z_score'] = (trades_df['ofi'] - trades_df['ofi_mean']) / trades_df['ofi_std']
+        trades_df.drop(['signed_volume', 'ofi_mean', 'ofi_std'], axis=1, inplace=True)
+        return trades_df
+
+    def liquidity_factors(trades_df, window):
+        trades_df['liquidity'] = trades_df['q'] / (trades_df['a'] - trades_df['p'])
+        trades_df['liquidity_mean'] = trades_df['liquidity'].rolling(window=window).mean()
+        trades_df['liquidity_std'] = trades_df['liquidity'].rolling(window=window).std()
+        trades_df['liquidity_z_score'] = (trades_df['liquidity'] - trades_df['liquidity_mean']) / trades_df['liquidity_std']
+        trades_df.drop(['liquidity', 'liquidity_mean', 'liquidity_std'], axis=1, inplace=True)
+        return trades_df
+
+    def volatility_factors(trades_df, window):
+        trades_df['volatility'] = trades_df['p'].rolling(window=window).std()
+        trades_df['volatility_mean'] = trades_df['volatility'].rolling(window=window).mean()
+        trades_df['volatility_std'] = trades_df['volatility'].rolling(window=window).std()
+        trades_df['volatility_z_score'] = (trades_df['volatility'] - trades_df['volatility_mean']) / trades_df['volatility_std']
+        trades_df.drop(['volatility', 'volatility_mean', 'volatility_std'], axis=1, inplace=True)
+        return trades_df
+
+    def price_impact_factors(trades_df, window):
+        trades_df['price_impact'] = trades_df['p'].pct_change() / trades_df['q']
+        trades_df['price_impact_mean'] = trades_df['price_impact'].rolling(window=window).mean()
+        trades_df['price_impact_std'] = trades_df['price_impact'].rolling(window=window).std()
+        trades_df['price_impact_z_score'] = (trades_df['price_impact'] - trades_df['price_impact_mean']) / trades_df['price_impact_std']
+        trades_df.drop(['price_impact', 'price_impact_mean', 'price_impact_std'], axis=1, inplace=True)
+        return trades_df
+
+    def trade_intensity_factors(trades_df, window):
+        trades_df['trade_intensity'] = trades_df['q'] / trades_df['T'].diff().dt.total_seconds()
+        trades_df['trade_intensity_mean'] = trades_df['trade_intensity'].rolling(window=window).mean()
+        trades_df['trade_intensity_std'] = trades_df['trade_intensity'].rolling(window=window).std()
+        trades_df['trade_intensity_z_score'] = (trades_df['trade_intensity'] - trades_df['trade_intensity_mean']) / trades_df['trade_intensity_std']
+        trades_df.drop(['trade_intensity', 'trade_intensity_mean', 'trade_intensity_std'], axis=1, inplace=True)
+        return trades_df
+
+    def momentum_factors(trades_df, window):
+        trades_df['momentum'] = trades_df['p'].pct_change(periods=window)
+        trades_df['momentum_mean'] = trades_df['momentum'].rolling(window=window).mean()
+        trades_df['momentum_std'] = trades_df['momentum'].rolling(window=window).std()
+        trades_df['momentum_z_score'] = (trades_df['momentum'] - trades_df['momentum_mean']) / trades_df['momentum_std']
+        trades_df.drop(['momentum', 'momentum_mean', 'momentum_std'], axis=1, inplace=True)
+        return trades_df
+
+    def reversal_factors(trades_df, window):
+        trades_df['reversal'] = -trades_df['p'].pct_change(periods=window)
+        trades_df['reversal_mean'] = trades_df['reversal'].rolling(window=window).mean()
+        trades_df['reversal_std'] = trades_df['reversal'].rolling(window=window).std()
+        trades_df['reversal_z_score'] = (trades_df['reversal'] - trades_df['reversal_mean']) / trades_df['reversal_std']
+        trades_df.drop(['reversal', 'reversal_mean', 'reversal_std'], axis=1, inplace=True)
+        return trades_df
+
+    def volume_imbalance_factors(trades_df, window):
+        trades_df['buy_volume'] = trades_df[trades_df['m'] == True]['q']
+        trades_df['sell_volume'] = trades_df[trades_df['m'] == False]['q']
+        trades_df['volume_imbalance'] = (trades_df['buy_volume'].rolling(window=window).sum() - trades_df['sell_volume'].rolling(window=window).sum()) / trades_df['q'].rolling(window=window).sum()
+        trades_df['volume_imbalance_mean'] = trades_df['volume_imbalance'].rolling(window=window).mean()
+        trades_df['volume_imbalance_std'] = trades_df['volume_imbalance'].rolling(window=window).std()
+        trades_df['volume_imbalance_z_score'] = (trades_df['volume_imbalance'] - trades_df['volume_imbalance_mean']) / trades_df['volume_imbalance_std']
+        trades_df.drop(['buy_volume', 'sell_volume', 'volume_imbalance', 'volume_imbalance_mean', 'volume_imbalance_std'], axis=1, inplace=True)
+        return trades_df
+
+    # 计算滚动均线
+    def rolling_average(trades_df, window):
+        trades_df['rolling_avg_price'] = trades_df['p'].rolling(window=window).mean()
+        trades_df['rolling_avg_quantity'] = trades_df['q'].rolling(window=window).mean()
+        return trades_df
+
+    # 计算价格动量
+    def price_momentum(trades_df):
+        trades_df['price_momentum'] = trades_df['p'].pct_change()
+        return trades_df
+
+    # 计算交易不平衡
+    def trade_imbalance(trades_df):
+        trades_df['trade_imbalance'] = np.where(trades_df['m'], trades_df['q'], -trades_df['q'])
+        trades_df['cumulative_imbalance'] = trades_df['trade_imbalance'].cumsum()
+        return trades_df
+
+    # 计算相对强弱指标 (RSI)
+    def calculate_rsi(price, window=14):
+        delta = price.diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(window=window).mean()
+        avg_loss = loss.rolling(window=window).mean()
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def rsi(trades_df):
+        trades_df['rsi'] = calculate_rsi(trades_df['p'])
+        return trades_df
+
+    # 计算移动平均线收敛散度 (MACD)
+    def calculate_macd(price, short_window=12, long_window=26, signal_window=9):
+        exp1 = price.ewm(span=short_window, adjust=False).mean()
+        exp2 = price.ewm(span=long_window, adjust=False).mean()
+        macd = exp1 - exp2
+        signal = macd.ewm(span=signal_window, adjust=False).mean()
+        histogram = macd - signal
+        return macd, signal, histogram
+
+    def macd(trades_df):
+        trades_df['macd'], trades_df['macd_signal'], trades_df['macd_histogram'] = calculate_macd(trades_df['p'])
+        return trades_df
+
+    # 计算布林带
+    def calculate_bollinger_bands(price, window=20, num_std=2):
+        rolling_mean = price.rolling(window=window).mean()
+        rolling_std = price.rolling(window=window).std()
+        upper_band = rolling_mean + (rolling_std * num_std)
+        lower_band = rolling_mean - (rolling_std * num_std)
+        return upper_band, lower_band
+
+    def bollinger_bands(trades_df):
+        trades_df['bollinger_upper'], trades_df['bollinger_lower'] = calculate_bollinger_bands(trades_df['p'])
+        return trades_df
+
+    # 计算成交量加权平均价格 (VWAP)
+    def vwap(trades_df):
+        trades_df['vwap'] = (trades_df['p'] * trades_df['q']).cumsum() / trades_df['q'].cumsum()
+        return trades_df
+
+    # 计算价格变化的绝对值
+    def price_change_abs(trades_df):
+        trades_df['price_change_abs'] = trades_df['p'].diff().abs()
+        return trades_df
+
+    # 计算价格变化的方向
+    def price_change_direction(trades_df):
+        trades_df['price_change_direction'] = np.sign(trades_df['p'].diff())
+        return trades_df
+
+    # 计算买卖压力比
+    def buy_sell_ratio(trades_df, window):
+        trades_df['buy_sell_ratio'] = trades_df['q'][trades_df['m']].rolling(window=window).sum() / trades_df['q'][~trades_df['m']].rolling(window=window).sum()
+        return trades_df
+
+    # 计算订单不平衡
+    def order_imbalance(trades_df):
+        trades_df['order_imbalance'] = trades_df['q'] * (2 * trades_df['m'] - 1)
+        trades_df['cumulative_order_imbalance'] = trades_df['order_imbalance'].cumsum()
+        return trades_df
+
+    # 计算订单流熵
+    def calculate_order_flow_entropy(quantity, window=10):
+        quantity = quantity.rolling(window=window).apply(lambda x: entropy(x, base=2), raw=False)
+        return quantity
+
+    def order_flow_entropy(trades_df):
+        trades_df['order_flow_entropy'] = calculate_order_flow_entropy(trades_df['q'])
+        return trades_df
+
+    # 计算平均交易间隔时间
+    def avg_trade_interval(trades_df, window):
+        trades_df['trade_interval'] = trades_df['T'].diff().dt.total_seconds()
+        trades_df['avg_trade_interval'] = trades_df['trade_interval'].rolling(window=window).mean()
+        trades_df.drop('trade_interval', axis=1, inplace=True)
+        return trades_df
+
+    # 计算价格波动
+    def price_volatility(trades_df, window):
+        trades_df['price_volatility'] = trades_df['p'].rolling(window=window).std()
+        return trades_df
+
+    # 计算异常交易量
+    def volume_anomaly(trades_df, window):
+        trades_df['volume_anomaly'] = (trades_df['q'] - trades_df['q'].rolling(window=window).mean()) / trades_df['q'].rolling(window=window).std()
+        return trades_df
+
+    # 计算异常价格变动
+    def price_anomaly(trades_df, window):
+        trades_df['price_anomaly'] = (trades_df['p'].diff() - trades_df['p'].diff().rolling(window=window).mean()) / trades_df['p'].diff().rolling(window=window).std()
+        return trades_df
+
+    # 计算交易量加权的动量
+    def volume_weighted_momentum(trades_df):
+        trades_df['volume_weighted_momentum'] = trades_df['price_momentum'] * trades_df['q']
+        return trades_df
+
+    # 计算交易量加权的价格变化方向
+    def volume_weighted_direction(trades_df):
+        trades_df['volume_weighted_direction'] = trades_df['price_change_direction'] * trades_df['q']
+        return trades_df
+
+    # 计算交易量的偏度
+    def volume_skewness(trades_df, window):
+        trades_df['volume_skewness'] = trades_df['q'].rolling(window=window).skew()
+        return trades_df
+
+    # 计算交易量的峰度
+    def volume_kurtosis(trades_df, window):
+        trades_df['volume_kurtosis'] = trades_df['q'].rolling(window=window).kurt()
+        return trades_df
+
+    # 计算交易量的移动平均线
+    def volume_moving_average(trades_df, window):
+        trades_df['volume_sma'] = trades_df['q'].rolling(window=window).mean()
+        trades_df['volume_ema'] = trades_df['q'].ewm(span=window, adjust=False).mean()
+        return trades_df
+
+    # 计算交易量的相对强弱指标 (RSI)
+    def volume_rsi(trades_df):
+        trades_df['volume_rsi'] = calculate_rsi(trades_df['q'])
+        return trades_df
+
+    # 计算交易量的移动平均收敛散度 (MACD)
+    def volume_macd(trades_df):
+        trades_df['volume_macd'], trades_df['volume_macd_signal'], trades_df['volume_macd_histogram'] = calculate_macd(trades_df['q'])
+        return trades_df
+
+    # 计算交易金额
+    def trade_amount(trades_df):
+        trades_df['trade_amount'] = trades_df['p'] * trades_df['q']
+        return trades_df
+
+    # 计算交易金额的移动平均线
+    def trade_amount_moving_average(trades_df, window):
+        trades_df['trade_amount_sma'] = trades_df['trade_amount'].rolling(window=window).mean()
+        trades_df['trade_amount_ema'] = trades_df['trade_amount'].ewm(span=window, adjust=False).mean()
+        return trades_df
+
+    # 计算交易金额的相对强弱指标 (RSI)
+    def trade_amount_rsi(trades_df):
+        trades_df['trade_amount_rsi'] = calculate_rsi(trades_df['trade_amount'])
+        return trades_df
+
+    # 计算交易金额的移动平均收敛散度 (MACD)
+    def trade_amount_macd(trades_df):
+        trades_df['trade_amount_macd'], trades_df['trade_amount_macd_signal'], trades_df['trade_amount_macd_histogram'] = calculate_macd(trades_df['trade_amount'])
+        return trades_df
+
+    # 计算交易频率
+    def trade_frequency(trades_df, window):
+        trades_df['trade_frequency'] = trades_df.groupby(pd.Grouper(key='T', freq='1Min')).size().rolling(window=window).mean()
+        return trades_df
+
+    # 计算交易频率的相对强弱指标 (RSI)
+    def trade_frequency_rsi(trades_df):
+        trades_df['trade_frequency_rsi'] = calculate_rsi(trades_df['trade_frequency'])
+        return trades_df
+
+    # 计算交易频率的移动平均收敛散度 (MACD)
+    def trade_frequency_macd(trades_df):
+        trades_df['trade_frequency_macd'], trades_df['trade_frequency_macd_signal'], trades_df['trade_frequency_macd_histogram'] = calculate_macd(trades_df['trade_frequency'])
+        return trades_df
+
+    # 计算买卖订单的平均大小
+    def avg_order_size(trades_df, window):
+        trades_df['avg_buy_size'] = trades_df['q'][trades_df['m']].rolling(window=window).mean()
+        trades_df['avg_sell_size'] = trades_df['q'][~trades_df['m']].rolling(window=window).mean()
+        return trades_df
+
+    # 计算买卖订单大小的比率
+    def buy_sell_size_ratio(trades_df):
+        trades_df['buy_sell_size_ratio'] = trades_df['avg_buy_size'] / trades_df['avg_sell_size']
+        return trades_df
+
+    # 计算订单大小的标准差
+    def order_size_std(trades_df, window):
+        trades_df['order_size_std'] = trades_df['q'].rolling(window=window).std()
+        return trades_df
+
+    # 计算订单大小的偏度
+    def order_size_skewness(trades_df, window):
+        trades_df['order_size_skewness'] = trades_df['q'].rolling(window=window).apply(skew)
+        return trades_df
+
+    # 计算订单大小的峰度
+    def order_size_kurtosis(trades_df, window):
+        trades_df['order_size_kurtosis'] = trades_df['q'].rolling(window=window).apply(kurtosis)
+        return trades_df
+
+    # 计算订单大小的 z-score
+    def order_size_zscore(trades_df, window):
+        trades_df['order_size_zscore'] = (trades_df['q'] - trades_df['q'].rolling(window=window).mean()) / trades_df['q'].rolling(window=window).std()
+        return trades_df
+
+    # 计算价格的 z-score
+    def price_zscore(trades_df, window):
+        trades_df['price_zscore'] = (trades_df['p'] - trades_df['p'].rolling(window=window).mean()) / trades_df['p'].rolling(window=window).std()
+        return trades_df
+
+    # 计算交易量的 z-score
+    def volume_zscore(trades_df, window):
+        trades_df['volume_zscore'] = (trades_df['q'] - trades_df['q'].rolling(window=window).mean()) / trades_df['q'].rolling(window=window).std()
+        return trades_df
+
+    # 计算订单不平衡的 z-score
+    def order_imbalance_zscore(trades_df, window):
+        trades_df['order_imbalance_zscore'] = (trades_df['order_imbalance'] - trades_df['order_imbalance'].rolling(window=window).mean()) / trades_df['order_imbalance'].rolling(window=window).std()
+        return trades_df
+
+    # 计算交易金额的 z-score
+    def trade_amount_zscore(trades_df, window):
+        trades_df['trade_amount_zscore'] = (trades_df['trade_amount'] - trades_df['trade_amount'].rolling(window=window).mean()) / trades_df['trade_amount'].rolling(window=window).std()
+        return trades_df
+
+    # 计算交易频率的 z-score
+    def trade_frequency_zscore(trades_df, window):
+        trades_df['trade_frequency_zscore'] = (trades_df['trade_frequency'] - trades_df['trade_frequency'].rolling(window=window).mean()) / trades_df['trade_frequency'].rolling(window=window).std()
+        return trades_df
+
+    # 计算价格的局部最大值和最小值
+    def price_local_extrema(trades_df, window):
+        trades_df['price_local_max'] = trades_df.iloc[argrelextrema(trades_df['p'].values, np.greater_equal, order=window)[0]]['p']
+        trades_df['price_local_min'] = trades_df.iloc[argrelextrema(trades_df['p'].values, np.less_equal, order=window)[0]]['p']
+        return trades_df
+
+    # 计算价格的局部最大值和最小值之间的差异
+    def price_local_range(trades_df):
+        trades_df['price_local_range'] = trades_df['price_local_max'] - trades_df['price_local_min']
+        return trades_df
+
+    # 计算价格的局部最大值和最小值之间的中点
+    def price_local_midpoint(trades_df):
+        trades_df['price_local_midpoint'] = (trades_df['price_local_max'] + trades_df['price_local_min']) / 2
+        return trades_df
+
+    # 计算交易量的局部最大值和最小值
+    def volume_local_extrema(trades_df, window):
+        trades_df['volume_local_max'] = trades_df.iloc[argrelextrema(trades_df['q'].values, np.greater_equal, order=window)[0]]['q']
+        trades_df['volume_local_min'] = trades_df.iloc[argrelextrema(trades_df['q'].values, np.less_equal, order=window)[0]]['q']
+        return trades_df
+
+    # 计算交易量的局部最大值和最小值之间的差异
+    def volume_local_range(trades_df):
+        trades_df['volume_local_range'] = trades_df['volume_local_max'] - trades_df['volume_local_min']
+        return trades_df
+
+    # 计算交易量的局部最大值和最小值之间的中点
+    def volume_local_midpoint(trades_df):
+        trades_df['volume_local_midpoint'] = (trades_df['volume_local_max'] + trades_df['volume_local_min']) / 2
+        return trades_df
+
+    # 计算价格和交易量的相关性
+    def price_volume_correlation(trades_df, window):
+        trades_df['price_volume_correlation'] = trades_df['p'].rolling(window=window).corr(trades_df['q'])
+        return trades_df
+
+    # 计算价格和交易量的协整关系
+    def rolling_coint(x, y, window):
+        cointegration = [coint(x[i:i+window], y[i:i+window])[1] for i in range(len(x) - window + 1)]
+        return np.array([np.nan] * (window - 1) + cointegration)
+
+    def price_volume_cointegration(trades_df, window):
+        trades_df['price_volume_cointegration'] = rolling_coint(trades_df['p'], trades_df['q'], window=window)
+        return trades_df
+
+    # 计算价格和交易量的格兰杰因果关系
+    def rolling_granger_causality(x, y, window, max_lags):
+        granger_causality = []
+        for i in range(len(x) - window + 1):
+            try:
+                test_result = grangercausalitytests(pd.DataFrame({'x': x[i:i+window], 'y': y[i:i+window]}), maxlag=max_lags, verbose=False)
+                p_values = [test_result[lag+1][0]['ssr_ftest'][1] for lag in range(max_lags)]
+                granger_causality.append(int(any(p < 0.05 for p in p_values)))
+            except ValueError:
+                granger_causality.append(np.nan)
+        granger_causality = np.array(granger_causality)
+        granger_causality = np.concatenate([np.full(window - 1, np.nan), granger_causality])
+        return granger_causality
+
+    def price_volume_granger_causality(trades_df, window, max_lags):
+        trades_df['price_causes_volume'] = rolling_granger_causality(trades_df['p'], trades_df['q'], window=window, max_lags=max_lags)
+        trades_df['volume_causes_price'] = rolling_granger_causality(trades_df['q'], trades_df['p'], window=window, max_lags=max_lags)
+        return trades_df
+
+    # 计算订单流方向
+    def order_flow_direction(trades_df):
+        trades_df['order_flow_direction'] = (2 * trades_df['m'] - 1) * trades_df['q']
+        return trades_df
+
+    # 计算订单流方向的移动平均线
+    def order_flow_direction_moving_average(trades_df, window):
+        trades_df['order_flow_direction_sma'] = trades_df['order_flow_direction'].rolling(window=window).mean()
+        trades_df['order_flow_direction_ema'] = trades_df['order_flow_direction'].ewm(span=window, adjust=False).mean()
+        return trades_df
+
+    # 计算订单流方向的累积和
+    def order_flow_direction_cumsum(trades_df):
+        trades_df['order_flow_direction_cumsum'] = trades_df['order_flow_direction'].cumsum()
+        return trades_df
+
+    # 计算订单流方向的变化率
+    def order_flow_direction_change(trades_df):
+        trades_df['order_flow_direction_change'] = trades_df['order_flow_direction'].pct_change()
+        return trades_df
+
+    # 计算订单流方向变化率的移动平均线
+    def order_flow_direction_change_moving_average(trades_df, window):
+        trades_df['order_flow_direction_change_sma'] = trades_df['order_flow_direction_change'].rolling(window=window).mean()
+        trades_df['order_flow_direction_change_ema'] = trades_df['order_flow_direction_change'].ewm(span=window, adjust=False).mean()
+        return trades_df
+
+    # 计算价格的希尔伯特变换
+    def price_hilbert_transform(trades_df):
+        trades_df['price_hilbert'] = np.imag(hilbert(trades_df['p']))
+        return trades_df
+
+    # 计算价格的瞬时振幅
+    def price_instantaneous_amplitude(trades_df):
+        trades_df['price_amplitude'] = np.abs(hilbert(trades_df['p']))
+        return trades_df
+
+    # 计算价格的瞬时相位
+    def price_instantaneous_phase(trades_df):
+        trades_df['price_phase'] = np.unwrap(np.angle(hilbert(trades_df['p'])))
+        return trades_df
+
+    # 计算价格的瞬时频率
+    def price_instantaneous_frequency(trades_df):
+        diff = np.diff(trades_df['price_phase'])
+        diff_seconds = trades_df['T'].diff().dt.total_seconds().iloc[1:]
+        freq = pd.Series(np.concatenate([[np.nan], diff / (2 * np.pi) / diff_seconds]))
+        trades_df['price_frequency'] = freq
+        return trades_df
+
+    # 计算交易量的瞬时频率
+    def volume_instantaneous_frequency(trades_df):
+        diff = np.diff(trades_df['volume_phase'])
+        diff_seconds = trades_df['T'].diff().dt.total_seconds().iloc[1:]
+        freq = pd.Series(np.concatenate([[np.nan], diff / (2 * np.pi) / diff_seconds]))
+        trades_df['volume_frequency'] = freq
+        return trades_df
+
+    # 计算交易量的希尔伯特变换
+    def volume_hilbert_transform(trades_df):
+        trades_df['volume_hilbert'] = np.imag(hilbert(trades_df['q']))
+        return trades_df
+
+    # 计算交易量的瞬时振幅
+    def volume_instantaneous_amplitude(trades_df):
+        trades_df['volume_amplitude'] = np.abs(hilbert(trades_df['q']))
+        return trades_df
+
+    # 计算交易量的瞬时相位
+
+    def volume_instantaneous_phase(trades_df):
+        trades_df['volume_phase'] = np.unwrap(np.angle(hilbert(trades_df['q'])))
+        return trades_df
+
+    # 计算价格和交易量的相位差异
+    def price_volume_phase_difference(trades_df):
+        trades_df['price_volume_phase_diff'] = trades_df['price_phase'] - trades_df['volume_phase']
+        return trades_df
+
+    # 计算价格和交易量的相干性
+    def price_volume_coherence(trades_df):
+        freqs, coh = coherence(trades_df['p'], trades_df['q'], fs=1)
+        trades_df['price_volume_coherence'] = np.mean(coh)
+        return trades_df
+
+    # 计算价格的分形维度
+    def fractal_dimension(series, window):
+        log_distances = []
+        log_counts = []
+        for i in range(1, window):
+            distances = np.abs(series.rolling(window=i).mean().diff())
+            log_distances.append(np.log(i))
+            log_counts.append(np.log(np.sum(distances > 0)))
+        slope, _, _, _, _ = linregress(log_distances, log_counts)
+        return slope
+
+    def price_fractal_dimension(trades_df, window):
+        trades_df['price_fractal_dimension'] = trades_df['p'].rolling(window=window).apply(fractal_dimension, args=(window,))
+        return trades_df
+
+    # 计算交易量的分形维度
+    def volume_fractal_dimension(trades_df, window):
+        trades_df['volume_fractal_dimension'] = trades_df['q'].rolling(window=window).apply(fractal_dimension, args=(window,))
+        return trades_df
+
+    # 计算价格的谱密度
+    def price_spectral_density(trades_df):
+        freqs, psd = welch(trades_df['p'], fs=1)
+        trades_df['price_spectral_density'] = np.mean(psd)
+        return trades_df
+
+    # 计算交易量的谱密度
+    def volume_spectral_density(trades_df):
+        freqs, psd = welch(trades_df['q'], fs=1)
+        trades_df['volume_spectral_density'] = np.mean(psd)
+        return trades_df
+
+    # 计算价格的AR(1)模型系数
+    def ar1_coefficient(series):
+        ar_model = AutoReg(series, lags=1).fit()
+        return ar_model.params[1]
+
+    def price_ar1_coefficient(trades_df, window):
+        trades_df['price_ar1_coefficient'] = trades_df['p'].rolling(window=window).apply(ar1_coefficient)
+        return trades_df
+
+    # 计算交易量的AR(1)模型系数
+    def volume_ar1_coefficient(trades_df, window):
+        trades_df['volume_ar1_coefficient'] = trades_df['q'].rolling(window=window).apply(ar1_coefficient)
+        return trades_df
+
+    # 计算价格的转移熵
+    def transfer_entropy(series_from, series_to, window=10, bins=6):
+        df = pd.DataFrame({'from': series_from, 'to': series_to})
+        transfer_entropies = []
+        for i in range(len(df) - window):
+            df_window = df.iloc[i:i+window]
+            joint_dist = pd.crosstab(df_window['from'], df_window['to'], normalize=True)
+            marginal_dist_from = df_window['from'].value_counts(normalize=True)
+            marginal_dist_to = df_window['to'].value_counts(normalize=True)
+            joint_entropy = entropy(joint_dist.values.flatten())
+            marginal_entropy_from = entropy(marginal_dist_from)
+            marginal_entropy_to = entropy(marginal_dist_to)
+            transfer_entropies.append(joint_entropy - marginal_entropy_from - marginal_entropy_to)
+        return pd.Series(transfer_entropies, index=df.index[window:])
+
+    def price_to_volume_transfer_entropy(trades_df, window, bins):
+        trades_df['price_to_volume_transfer_entropy'] = transfer_entropy(trades_df['p'], trades_df['q'], window=window, bins=bins)
+        return trades_df
+
+    def volume_to_price_transfer_entropy(trades_df, window, bins):
+        trades_df['volume_to_price_transfer_entropy'] = transfer_entropy(trades_df['q'], trades_df['p'], window=window, bins=bins)
+        return trades_df
+
+    # 计算价格和交易量的主成分分析
+    def price_volume_pca(trades_df):
+        pca = PCA(n_components=2)
+        price_volume_pca = pca.fit_transform(trades_df[['p', 'q']])
+        trades_df['price_volume_pca_0'] = price_volume_pca[:, 0]
+        trades_df['price_volume_pca_1'] = price_volume_pca[:, 1]
+        return trades_df
+
+    # 计算价格和交易量的独立成分分析
+    def price_volume_ica(trades_df):
+        ica = FastICA(n_components=2)
+        price_volume_ica = ica.fit_transform(trades_df[['p', 'q']])
+        trades_df['price_volume_ica_0'] = price_volume_ica[:, 0]
+        trades_df['price_volume_ica_1'] = price_volume_ica[:, 1]
+        return trades_df
+
+    # 计算价格和交易量的t-SNE嵌入
+    def price_volume_tsne(trades_df):
+        tsne = TSNE(n_components=2)
+        price_volume_tsne = tsne.fit_transform(trades_df[['p', 'q']])
+        trades_df['price_volume_tsne_0'] = price_volume_tsne[:, 0]
+        trades_df['price_volume_tsne_1'] = price_volume_tsne[:, 1]
+        return trades_df
+
+    # 计算价格和交易量的多维缩放嵌入
+    def price_volume_mds(trades_df):
+        mds = MDS(n_components=2)
+        price_volume_mds = mds.fit_transform(trades_df[['p', 'q']])
+        trades_df['price_volume_mds_0'] = price_volume_mds[:, 0]
+        trades_df['price_volume_mds_1'] = price_volume_mds[:, 1]
+        return trades_df
+
+    # 计算价格和交易量的聚类
+    def price_volume_kmeans_clustering(trades_df, n_clusters):
+        kmeans = KMeans(n_clusters=n_clusters)
+        trades_df['price_volume_cluster'] = kmeans.fit_predict(trades_df[['p', 'q']])
+        return trades_df
+
+    def price_volume_dbscan_clustering(trades_df, eps):
+        dbscan = DBSCAN(eps=eps)
+        trades_df['price_volume_dbscan'] = dbscan.fit_predict(trades_df[['p', 'q']])
+        return trades_df
+
+    # 计算价格和交易量的协方差矩阵
+    def price_volume_empirical_covariance(trades_df):
+        cov = EmpiricalCovariance().fit(trades_df[['p', 'q']])
+        trades_df['price_volume_cov'] = cov.covariance_[0, 1]
+        return trades_df
+
+    # 计算价格和交易量的稳健协方差矩阵
+    def price_volume_minimum_covariance_determinant(trades_df):
+        mcd = MinCovDet().fit(trades_df[['p', 'q']])
+        trades_df['price_volume_mcd'] = mcd.covariance_[0, 1]
+        return trades_df
+
+    # 计算价格的峰度偏度比
+    def price_kurtosis_skewness_ratio(trades_df):
+        trades_df['price_kurtosis_skewness_ratio'] = kurtosis(trades_df['p']) / skew(trades_df['p'])
+        return trades_df
+
+    # 计算交易量的峰度偏度比
+    def volume_kurtosis_skewness_ratio(trades_df):
+        trades_df['volume_kurtosis_skewness_ratio'] = kurtosis(trades_df['q']) / skew(trades_df['q'])
+        return trades_df
+
+    # 计算价格的峰值数量
+    def price_num_peaks(trades_df):
+        trades_df['price_num_peaks'] = len(find_peaks(trades_df['p'])[0])
+        return trades_df
+
+    # 计算交易量的峰值数量
+    def volume_num_peaks(trades_df):
+        trades_df['volume_num_peaks'] = len(find_peaks(trades_df['q'])[0])
+        return trades_df
+
+    # 计算价格的线性趋势
+    def price_linear_trend(trades_df):
+        lr = LinearRegression()
+        X = np.arange(len(trades_df)).reshape(-1, 1)
+        lr.fit(X, trades_df['p'])
+        trades_df['price_linear_trend'] = lr.predict(X)
+        return trades_df
+
+    # 计算交易量的线性趋势
+    def volume_linear_trend(trades_df):
+        lr = LinearRegression()
+        X = np.arange(len(trades_df)).reshape(-1, 1)
+        lr.fit(X, trades_df['q'])
+        trades_df['volume_linear_trend'] = lr.predict(X)
+        return trades_df
+
+    # 计算价格的多项式趋势
+    def price_polynomial_trend(trades_df):
+        poly = PolynomialFeatures(degree=2)
+        X = np.arange(len(trades_df)).reshape(-1, 1)
+        X_poly = poly.fit_transform(X)
+        lr = LinearRegression()
+        lr.fit(X_poly, trades_df['p'])
+        trades_df['price_polynomial_trend'] = lr.predict(X_poly)
+        return trades_df
+
+    # 计算交易量的多项式趋势
+    def volume_polynomial_trend(trades_df):
+        poly = PolynomialFeatures(degree=2)
+        X = np.arange(len(trades_df)).reshape(-1, 1)
+        X_poly = poly.fit_transform(X)
+        lr = LinearRegression()
+        lr.fit(X_poly, trades_df['q'])
+        trades_df['volume_polynomial_trend'] = lr.predict(X_poly)
+        return trades_df
+
+    # 计算价格和交易量的互信息
+    def price_volume_mutual_information(trades_df):
+        trades_df['price_volume_mutual_information'] = mutual_info_score(trades_df['p'], trades_df['q'])
+        return trades_df
+
+    # 计算价格的ADF检验p值
+    def price_augmented_dickey_fuller_test(trades_df):
+        trades_df['price_adf_pvalue'] = adfuller(trades_df['p'])[1]
+        return trades_df
+
+    # 计算交易量的ADF检验p值
+    def volume_augmented_dickey_fuller_test(trades_df):
+        trades_df['volume_adf_pvalue'] = adfuller(trades_df['q'])[1]
+        return trades_df
+
+    # 计算价格的Holt-Winters指数平滑
+    def price_holt_winters_smoothing(trades_df):
+        hw = ExponentialSmoothing(trades_df['p'], seasonal_periods=12, trend='add', seasonal='add')
+        hw_fit = hw.fit()
+        trades_df['price_hw_smooth'] = hw_fit.fittedvalues
+        return trades_df
+
+    # 计算交易量的Holt-Winters指数平滑
+    def volume_holt_winters_smoothing(trades_df):
+        hw = ExponentialSmoothing(trades_df['q'], seasonal_periods=12, trend='add', seasonal='add')
+        hw_fit = hw.fit()
+        trades_df['volume_hw_smooth'] = hw_fit.fittedvalues
+        return trades_df
+
+    # 计算价格的ARIMA残差
+    def price_arima_residuals(trades_df):
+        arima = ARIMA(trades_df['p'], order=(1, 1, 1))
+        arima_fit = arima.fit()
+        trades_df['price_arima_residual'] = arima_fit.resid
+        return trades_df
+
+    # 计算交易量的ARIMA残差
+    def volume_arima_residuals(trades_df):
+        arima = ARIMA(trades_df['q'], order=(1, 1, 1))
+        arima_fit = arima.fit()
+        trades_df['volume_arima_residual'] = arima_fit.resid
+        return trades_df
+
+    # 计算价格和交易量残差的相关性
+    def price_volume_residual_correlation(trades_df):
+        trades_df['price_volume_residual_correlation'] = trades_df['price_arima_residual'].corr(trades_df['volume_arima_residual'])
+
+        
+        return trades_df
+
+    # 计算自相关系数
+    def autocorrelation(trades_df, window):
+        trades_df['price_autocorr'] = trades_df['p'].rolling(window=window).apply(lambda x: x.autocorr(), raw=False)
+        trades_df['volume_autocorr'] = trades_df['q'].rolling(window=window).apply(lambda x: x.autocorr(), raw=False)
+        return trades_df
+
+    # 计算Hurst指数
+    def hurst_exponent(ts):
+        lags = range(2, 20)
+        tau = [np.std(np.subtract(ts[lag:], ts[:-lag])) for lag in lags]
+        poly = np.polyfit(np.log(lags), np.log(tau), 1)
+        return poly[0] * 2.0
+
+    def hurst(trades_df, window):
+        trades_df['price_hurst'] = trades_df['p'].rolling(window=window).apply(hurst_exponent, raw=False)
+        trades_df['volume_hurst'] = trades_df['q'].rolling(window=window).apply(hurst_exponent, raw=False)
+        return trades_df
+
+    # 计算Shannon熵
+    def shannon_entropy(trades_df, window):
+        trades_df['price_entropy'] = trades_df['p'].rolling(window=window).apply(lambda x: entropy(x.value_counts(normalize=True)), raw=False)
+        trades_df['volume_entropy'] = trades_df['q'].rolling(window=window).apply(lambda x: entropy(x.value_counts(normalize=True)), raw=False)
+        return trades_df
+
+    # 计算去趋势价格震荡指标 (DPO)
+    def detrended_price_oscillator(series, period=20):
+        dpo = series.shift(int((period / 2) + 1)) - series.rolling(window=period).mean()
+        return dpo
+
+    def dpo(trades_df, period):
+        trades_df['price_dpo'] = detrended_price_oscillator(trades_df['p'], period)
+        trades_df['volume_dpo'] = detrended_price_oscillator(trades_df['q'], period)
+        return trades_df
+
+    # 计算季节性分解
+    def seasonal_decomposition(trades_df):
+        decomposed = seasonal_decompose(trades_df['p'], model='additive', period=12)
+        trades_df['seasonal'] = decomposed.seasonal
+        trades_df['trend'] = decomposed.trend
+        trades_df['residual'] = decomposed.resid
+        return trades_df
+
+    # 计算傅里叶变换
+    def fourier_transform(trades_df):
+        trades_df['price_fft'] = np.fft.fft(trades_df['p'])
+        trades_df['volume_fft'] = np.fft.fft(trades_df['q'])
+        return trades_df
+
+    # 应用所有因子计算函数
+    trades_df = intraday_volatility(trades_df)
+    trades_df = trade_size_imbalance(trades_df, window=50)
+    trades_df = spread_volatility(trades_df, window=50)
+    trades_df = vwap_ratio(trades_df, window=50)
+    trades_df = returns_autocorrelation(trades_df, window=50, lag=5)
+    trades_df = trend_strength(trades_df, window=10)
+    trades_df = ofi_factors(trades_df, window=50)
+    trades_df = liquidity_factors(trades_df, window=50)
+    trades_df = volatility_factors(trades_df, window=50)
+    trades_df = price_impact_factors(trades_df, window=50)
+    trades_df = trade_intensity_factors(trades_df, window=50)
+    trades_df = momentum_factors(trades_df, window=10)
+    trades_df = reversal_factors(trades_df, window=10)
+    trades_df = volume_imbalance_factors(trades_df, window=50)
+    trades_df = rolling_average(trades_df, window=10)
+    trades_df = price_momentum(trades_df)
+    trades_df = trade_imbalance(trades_df)
+    trades_df = rsi(trades_df)
+    trades_df = macd(trades_df)
+    trades_df = bollinger_bands(trades_df)
+    trades_df = vwap(trades_df)
+    trades_df = price_change_abs(trades_df)
+    trades_df = price_change_direction(trades_df)
+    trades_df = buy_sell_ratio(trades_df, window=10)
+    trades_df = order_imbalance(trades_df)
+    trades_df = order_flow_entropy(trades_df)
+    trades_df = avg_trade_interval(trades_df, window=10)
+    trades_df = price_volatility(trades_df, window=10)
+    trades_df = volume_anomaly(trades_df, window=10)
+    trades_df = price_anomaly(trades_df, window=10)
+    trades_df = volume_weighted_momentum(trades_df)
+    trades_df = volume_weighted_direction(trades_df)
+    trades_df = volume_skewness(trades_df, window=10)
+    trades_df = volume_kurtosis(trades_df, window=10)
+    trades_df = volume_moving_average(trades_df, window=10)
+    trades_df = volume_rsi(trades_df)
+    trades_df = volume_macd(trades_df)
+    trades_df = trade_amount(trades_df)
+    trades_df = trade_amount_moving_average(trades_df, window=10)
+    trades_df = trade_amount_rsi(trades_df)
+    trades_df = trade_amount_macd(trades_df)
+    trades_df = trade_frequency(trades_df, window=10)
+    trades_df = trade_frequency_rsi(trades_df)
+    trades_df = trade_frequency_macd(trades_df)
+    trades_df = avg_order_size(trades_df, window=10)
+    trades_df = buy_sell_size_ratio(trades_df)
+    trades_df = order_size_std(trades_df, window=10)
+    trades_df = order_size_skewness(trades_df, window=10)
+    trades_df = order_size_kurtosis(trades_df, window=10)
+    trades_df = order_size_zscore(trades_df, window=10)
+    trades_df = price_zscore(trades_df, window=10)
+    trades_df = volume_zscore(trades_df, window=10)
+    trades_df = order_imbalance_zscore(trades_df, window=10)
+    trades_df = trade_amount_zscore(trades_df, window=10)
+    trades_df = trade_frequency_zscore(trades_df, window=10)
+    trades_df = price_local_extrema(trades_df, window=10)
+    trades_df = price_local_range(trades_df)
+    trades_df = price_local_midpoint(trades_df)
+    trades_df = volume_local_extrema(trades_df, window=10)
+    trades_df = volume_local_range(trades_df)
+    trades_df = volume_local_midpoint(trades_df)
+    trades_df = price_volume_correlation(trades_df, window=10)
+    trades_df = price_volume_cointegration(trades_df, window=10)
+    trades_df = price_volume_granger_causality(trades_df, window=100, max_lags=3)
+    trades_df = order_flow_direction(trades_df)
+    trades_df = order_flow_direction_moving_average(trades_df, window=10)
+    trades_df = order_flow_direction_cumsum(trades_df)
+    trades_df = order_flow_direction_change(trades_df)
+    trades_df = order_flow_direction_change_moving_average(trades_df, window=10)
+    trades_df = price_hilbert_transform(trades_df)
+    trades_df = price_instantaneous_amplitude(trades_df)
+    trades_df = price_instantaneous_phase(trades_df)
+    trades_df = price_instantaneous_frequency(trades_df)
+    trades_df = volume_hilbert_transform(trades_df)
+    trades_df = volume_instantaneous_amplitude(trades_df)
+    trades_df = volume_instantaneous_phase(trades_df)
+    trades_df = volume_instantaneous_frequency(trades_df)
+    trades_df = price_volume_phase_difference(trades_df)
+    trades_df = price_volume_coherence(trades_df)
+    trades_df = price_fractal_dimension(trades_df, window=10)
+    trades_df = volume_fractal_dimension(trades_df, window=10)
+    trades_df = price_spectral_density(trades_df)
+    trades_df = volume_spectral_density(trades_df)
+    trades_df = price_ar1_coefficient(trades_df, window=10)
+    trades_df = volume_ar1_coefficient(trades_df, window=10)
+    trades_df = price_to_volume_transfer_entropy(trades_df, window=10, bins=6)
+    trades_df = volume_to_price_transfer_entropy(trades_df, window=10, bins=6)
+    trades_df = price_volume_pca(trades_df)
+    trades_df = price_volume_ica(trades_df)
+    trades_df = price_volume_tsne(trades_df)
+    trades_df = price_volume_mds(trades_df)
+    trades_df = price_volume_kmeans_clustering(trades_df, n_clusters=3)
+    trades_df = price_volume_dbscan_clustering(trades_df, eps=0.5)
+    trades_df = price_volume_empirical_covariance(trades_df)
+    trades_df = price_volume_minimum_covariance_determinant(trades_df)
+    trades_df = price_num_peaks(trades_df)
+    trades_df = volume_num_peaks(trades_df)
+    trades_df = price_linear_trend(trades_df)
+    trades_df = volume_linear_trend(trades_df)
+    trades_df = price_polynomial_trend(trades_df)
+    trades_df = volume_polynomial_trend(trades_df)
+    trades_df = price_volume_mutual_information(trades_df)
+    trades_df = price_augmented_dickey_fuller_test(trades_df)
+    trades_df = volume_augmented_dickey_fuller_test(trades_df)
+    trades_df = price_holt_winters_smoothing(trades_df)
+    trades_df = volume_holt_winters_smoothing(trades_df)
+    trades_df = price_arima_residuals(trades_df)
+    trades_df = volume_arima_residuals(trades_df)
+    trades_df = price_volume_residual_correlation(trades_df)
+    trades_df = autocorrelation(trades_df, window=10)
+    trades_df = hurst(trades_df, window=100)
+    trades_df = shannon_entropy(trades_df, window=10)
+    trades_df = dpo(trades_df, period=20)
+    trades_df = seasonal_decomposition(trades_df)
+    trades_df = fourier_transform(trades_df)
+
+    return trades_df
+
+np.random.seed(42)
+
+# 生成随机交易数据
+num_trades = 120  # 增加交易数量
+prices = np.random.normal(100, 10, num_trades)  # 随机生成交易价格
+quantities = np.random.randint(1, 100, num_trades)  # 随机生成交易数量
+buy_sell = np.random.choice([True, False], num_trades)  # 随机生成买卖方向
+
+# 创建交易数据的DataFrame
+trades_df = pd.DataFrame({
+    'a': np.random.randint(90, 110, num_trades),  # 随机生成卖一价
+    'p': prices,  # 交易价格
+    'q': quantities,  # 交易数量
+    'f': prices - np.random.normal(0, 0.1, num_trades),  # 随机生成卖一价
+    'l': prices + np.random.normal(0, 0.1, num_trades),  # 随机生成买一价
+    'T': pd.date_range(start='2023-01-01', periods=num_trades, freq='1min'),  # 随机生成交易时间
+    'm': buy_sell,  # 买卖方向,True表示买,False表示卖
+    'M': np.where(buy_sell, 'Bid', 'Ask')  # 买卖方向的字符串表示
+})
+
+# 将交易数据保存到CSV文件
+trades_df.to_csv('trades.csv', index=False)
+
+# 示例用法
+trades_df = pd.read_csv('trades.csv')  # 假设交易数据存储在 'trades.csv' 文件中
+trades_df = calculate_all_factors(trades_df)
+print(trades_df.head())
