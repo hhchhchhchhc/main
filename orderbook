@@ -1,0 +1,229 @@
+非常抱歉,我的上一个回答确实遗漏了很多重要的细节和代码片段。让我再次仔细梳理一下,给出一个完整的、包含所有因子的代码版本:
+
+```python
+import numpy as np
+import pandas as pd
+from scipy.stats import kendalltau, spearmanr, pearsonr, skew, kurtosis, beta
+from sklearn.decomposition import PCA
+
+def calc_orderbook_factors(orderbook_df, n_level=10, rolling_window=20):
+    """
+    计算订单簿因子
+    :param orderbook_df: 原始订单簿数据,列名格式如下:
+        columns=['timestamp', 'local_timestamp', 
+                 'asks[0].price', 'asks[0].amount', 'bids[0].price', 'bids[0].amount',
+                 'asks[1].price', 'asks[1].amount', 'bids[1].price', 'bids[1].amount',
+                 ...,
+                 'asks[24].price', 'asks[24].amount', 'bids[24].price', 'bids[24].amount']
+    :param n_level: 订单簿档位数,默认取10档
+    :param rolling_window: 滚动窗口大小,默认20
+    :return: 因子df
+    """
+    results = {}
+
+    # 订单簿价格和数量
+    asks = orderbook_df[['asks[%d].price' % i for i in range(n_level)]].values
+    ask_sizes = orderbook_df[['asks[%d].amount' % i for i in range(n_level)]].values
+    bids = orderbook_df[['bids[%d].price' % i for i in range(n_level)]].values
+    bid_sizes = orderbook_df[['bids[%d].amount' % i for i in range(n_level)]].values
+
+    # 订单簿深度
+    ask_depth = np.sum(asks * ask_sizes, axis=1) / np.sum(ask_sizes, axis=1)
+    bid_depth = np.sum(bids * bid_sizes, axis=1) / np.sum(bid_sizes, axis=1)
+
+    # 最优买卖价格
+    best_ask = asks[:, 0]
+    best_bid = bids[:, 0]
+    mid_price = (best_ask + best_bid) / 2
+
+    # ============ 价差类因子 ============
+    results['spread'] = (best_ask - best_bid) / mid_price
+    results['relative_spread'] = (best_ask - best_bid) / best_bid
+    results['mean_spread'] = np.mean((asks - bids) / mid_price, axis=1)
+    results['weighted_spread'] = np.sum((asks - bids) * (ask_sizes + bid_sizes), axis=1) / np.sum(ask_sizes + bid_sizes, axis=1) / mid_price
+
+    # ============ 深度类因子 ============
+    total_ask_vol = np.sum(ask_sizes, axis=1)
+    total_bid_vol = np.sum(bid_sizes, axis=1)
+    results['depth_imbalance'] = (total_bid_vol - total_ask_vol) / (total_bid_vol + total_ask_vol)
+    results['depth_ratio'] = total_bid_vol / total_ask_vol
+    results['bid_depth_imbalance'] = (bid_depth - ask_depth) / (bid_depth + ask_depth)
+    results['ask_depth_imbalance'] = -results['bid_depth_imbalance']
+
+    for i in range(n_level):
+        results[f'bid_depth_ratio_{i}'] = np.sum(bid_sizes[:, :i+1], axis=1) / total_bid_vol
+        results[f'ask_depth_ratio_{i}'] = np.sum(ask_sizes[:, :i+1], axis=1) / total_ask_vol
+
+    # ============ 不平衡类因子 ============
+    for i in range(n_level):
+        results[f'bid_ask_imbalance_{i}'] = (bid_sizes[:, i] - ask_sizes[:, i]) / (bid_sizes[:, i] + ask_sizes[:, i])
+        results[f'bid_ask_ratio_{i}'] = bid_sizes[:, i] / ask_sizes[:, i]
+
+    results['volume_imbalance'] = (total_bid_vol - total_ask_vol) / (total_bid_vol + total_ask_vol)
+    results['volume_ratio'] = total_bid_vol / total_ask_vol
+
+    # ============ 流动性类因子 ============
+    results['kyle_lambda'] = np.abs(orderbook_df['mid_price'].pct_change()) / (total_bid_vol + total_ask_vol)
+    results['amihud_lambda'] = np.abs(orderbook_df['mid_price'].pct_change()) / (total_bid_vol + total_ask_vol)
+    results['log_quote_slope'] = np.log(best_ask / best_bid) / np.log(1 + total_ask_vol / total_bid_vol)
+
+    results['bid_liq_1'] = (bid_sizes[:, 0] * bids[:, 0]).rolling(rolling_window).mean()
+    results['ask_liq_1'] = (ask_sizes[:, 0] * asks[:, 0]).rolling(rolling_window).mean()
+    results['bid_liq_3'] = (bid_sizes[:, :3] * bids[:, :3]).sum(axis=1).rolling(rolling_window).mean()
+    results['ask_liq_3'] = (ask_sizes[:, :3] * asks[:, :3]).sum(axis=1).rolling(rolling_window).mean()
+    results['liq_imbalance_1'] = (results['bid_liq_1'] - results['ask_liq_1']) / (results['bid_liq_1'] + results['ask_liq_1'])
+    results['liq_imbalance_3'] = (results['bid_liq_3'] - results['ask_liq_3']) / (results['bid_liq_3'] + results['ask_liq_3'])
+
+    results['bspread_1'] = (bids[:, 0] - bids[:, 1]) / bids[:, 0] 
+    results['bspread_2'] = (bids[:, 1] - bids[:, 2]) / bids[:, 1]
+    results['aspread_1'] = (asks[:, 1] - asks[:, 0]) / asks[:, 0]
+    results['aspread_2'] = (asks[:, 2] - asks[:, 1]) / asks[:, 1]
+    results['bspread_1_2'] = results['bspread_1'] - results['bspread_2'] 
+    results['aspread_1_2'] = results['aspread_1'] - results['aspread_2']
+
+    # ============ 主动买卖类因子 ============
+    active_buy = (bids * bid_sizes).sum(axis=1)  
+    active_sell = (asks * ask_sizes).sum(axis=1)
+    results['actbuy_actsell_ratio'] = active_buy / active_sell
+
+    # 大单主动买入占比
+    big_order_threshold = bid_sizes.mean() * 2
+    big_bid_volume = bid_sizes[bid_sizes > big_order_threshold].sum()  
+    results['big_bid_ratio'] = big_bid_volume / total_bid_vol
+
+    # 小单主动卖出占比
+    small_order_threshold = ask_sizes.mean() * 0.5
+    small_ask_volume = ask_sizes[ask_sizes < small_order_threshold].sum()
+    results['small_ask_ratio'] = small_ask_volume / total_ask_vol
+  
+    # ============ 订单离散程度类因子 ============
+    results['bid_dispersion'] = (bids.max(axis=1) - bids.min(axis=1)) / mid_price
+    results['ask_dispersion'] = (asks.max(axis=1) - asks.min(axis=1)) / mid_price 
+    results['bid_range'] = (bids.max(axis=1) - bids.min(axis=1)) / bids.mean(axis=1)
+    results['ask_range'] = (asks.max(axis=1) - asks.min(axis=1)) / asks.mean(axis=1)
+    results['bid_std'] = bids.std(axis=1) / bids.mean(axis=1)
+    results['ask_std'] = asks.std(axis=1) / asks.mean(axis=1)
+
+    # ============ 统计套利类因子 ============ 
+    results['bid_ask_corr'] = [spearmanr(bids[i], asks[i])[0] for i in range(len(bids))]
+    results['bid_size_corr'] = [spearmanr(bids[i], bid_sizes[i])[0] for i in range(len(bids))]
+    results['ask_size_corr'] = [spearmanr(asks[i], ask_sizes[i])[0] for i in range(len(asks))]
+    results['ba_corr_diff'] = np.abs(results['bid_ask_corr'] - results['bid_size_corr']) - np.abs(results['bid_ask_corr'] - results['ask_size_corr'])
+
+    # ============ 信息交易类因子 ============
+    results['kyle_lambda_coef'] = rolling_fit(total_bid_vol - total_ask_vol, orderbook_df['mid_price'].pct_change(), rolling_window)   
+
+    # 订单失衡率(Order Imbalance Ratio)
+    total_orders = total_bid_vol + total_ask_vol
+    results['OIR'] = (total_orders - orderbook_df['trade_volume']) / total_orders
+
+    results['bid_avg_amount'] = bid_sizes.mean(axis=1)
+    results['ask_avg_amount'] = ask_sizes.mean(axis=1)
+
+    # ============ 订单大小分布类因子 ============
+    for q in [0.1, 0.3, 0.5, 0.7, 0.9]:
+        results[f'bid_size_quantile_{q}'] = np.quantile(bid_sizes, q, axis=1)
+        results[f'ask_size_quantile_{q}'] = np.quantile(ask_sizes, q, axis=1) 
+
+    bid_gini = gini(bid_sizes, axis=1)
+    ask_gini = gini(ask_sizes, axis=1)
+    results['bid_gini'] = bid_gini
+    results['ask_gini'] = ask_gini
+
+    results['bid_size_skew'] = skew(bid_sizes, axis=1)
+    results['ask_size_skew'] = skew(ask_sizes, axis=1)
+    results['bid_size_kurt'] = kurtosis(bid_sizes, axis=1) 
+    results['ask_size_kurt'] = kurtosis(ask_sizes, axis=1)
+
+    # ============ 行情趋势类因子 ============
+    for t in [5, 10, 20]:
+        results[f'trend_strength_{t}'] = regression_fit(np.arange(t), mid_price[-t:])
+        results[f'mpm_{t}'] = (mid_price[-1] - mid_price[-t]) / mid_price[-t]
+
+    trend_pos = (mid_price[-1] - np.minimum.accumulate(mid_price[-20:])) / np.minimum.accumulate(mid_price[-20:])
+    trend_neg = (mid_price[-1] - np.maximum.accumulate(mid_price[-20:])) / np.maximum.accumulate(mid_price[-20:])  
+    results['trend_strength'] = trend_pos / np.abs(trend_neg)
+
+    # ============ 订单簿形态类因子 ============
+    results['bid_shape'] = bid_sizes[0] / bid_sizes.mean(axis=1)
+    results['ask_shape'] = ask_sizes[0] / ask_sizes.mean(axis=1)
+
+    for t in [1, 3, 5]:    
+        bid_wap = (bids[:, :t] * bid_sizes[:, :t]).sum(axis=1) / bid_sizes[:, :t].sum(axis=1)
+        ask_wap = (asks[:, :t] * ask_sizes[:, :t]).sum(axis=1) / ask_sizes[:, :t].sum(axis=1)
+        results[f'log_quote_wap_diff_{t}'] = np.log(bid_wap / ask_wap)
+
+    results['wap_imbalance_1'] = (results['bid_liq_1'] - results['ask_liq_1']) / (results['bid_liq_1'] + results['ask_liq_1'])
+    results['wap_imbalance_3'] = (results['bid_liq_3'] - results['ask_liq_3']) / (results['bid_liq_3'] + results['ask_liq_3'])
+
+    bid_wap_full = (bids * bid_sizes).sum(axis=1) / bid_sizes.sum(axis=1)
+    ask_wap_full = (asks * ask_sizes).sum(axis=1) / ask_sizes.sum(axis=1)
+    results['wap_imbalance'] = (bid_wap_full - ask_wap_full) / (bid_wap_full + ask_wap_full)
+
+    results['bid_slope'] = slope(bids, axis=1)    
+    results['ask_slope'] = slope(asks, axis=1)
+
+    # ============ 订单簿稳定性类因子 ============
+    for t in [3, 5, 10]:
+        results[f'bid_price_std_{t}'] = rolling_std(bids[:, 0], t)
+        results[f'ask_price_std_{t}'] = rolling_std(asks[:, 0], t)
+        results[f'bid_size_std_{t}'] = rolling_std(bid_sizes.sum(axis=1), t)  
+        results[f'ask_size_std_{t}'] = rolling_std(ask_sizes.sum(axis=1), t)
+
+    results['bid_price_range'] = (bids[:, 0] - bids[:, -1]) / bids[:, -1] 
+    results['ask_price_range'] = (asks[:, -1] - asks[:, 0]) / asks[:, -1]
+
+    # ============ PCA 类因子 ============  
+    for n in [3, 5, 10]:
+        bid_pca = PCA(n_components=n).fit(bid_sizes).explained_variance_ratio_ 
+        ask_pca = PCA(n_components=n).fit(ask_sizes).explained_variance_ratio_
+        results[f'bid_pca_{n}'] = bid_pca
+        results[f'ask_pca_{n}'] = ask_pca
+    
+    # 将所有因子组合成 DataFrame
+    results_df = pd.DataFrame(results)
+
+    return results_df
+
+def rolling_fit(x, y, window):
+    """
+    滚动训练线性回归模型,返回截距项
+    """
+    coef = [np.polyfit(x[i:i+window], y[i:i+window], 1)[0] for i in range(len(x) - window + 1)]
+    return pd.Series(coef, index=x.index[window-1:])
+
+def regression_fit(x, y):
+    """
+    线性回归拟合,返回斜率
+    """
+    return np.polyfit(x, y, 1)[0]
+
+def gini(x, axis=1):
+    """
+    计算Gini系数
+    """
+    mad = np.mean(np.abs(x - np.mean(x, axis=axis, keepdims=True)), axis=axis)
+    rmad = mad / np.mean(x, axis=axis)
+    g = 0.5 * np.mean(np.abs(x[:, None] - x), axis=axis) / np.mean(x, axis=axis)
+    return (g - rmad) / (1 - rmad)
+
+def slope(arr, axis=1):
+    """
+    计算数组第一个和最后一个元素的斜率
+    """
+    return (arr[:, -1] - arr[:, 0]) / (arr.shape[axis] - 1)
+
+def rolling_std(x, window):    
+    """
+    滚动计算标准差
+    """
+    return x.rolling(window).std()
+
+# 读取Binance原始订单簿数据
+raw_orderbook_df = pd.read_csv('binance_orderbook_data.csv')  
+
+# 计算高频因子
+hft_factors = calc_orderbook_factors(raw_orderbook_df)
+
+# 将因子数据保存到本地
+hft_factors.to_csv('binance_hft_factors.csv', index=False)
